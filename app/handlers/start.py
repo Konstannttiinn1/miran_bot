@@ -1,0 +1,158 @@
+from html import escape as h
+
+from aiogram import F, Router, types
+from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
+
+from app.config import settings
+from app.handlers.states import Purchase
+from app.keyboards.builders import (admin_menu_kb, dealer_menu_kb, language_kb,
+                                    main_menu_kb, plans_kb, sub_link_kb)
+from app.middlewares.i18n import I18nMiddleware, get_text
+from app.repositories import db_repo
+from app.services.subscription import grant_vpn
+from app.services.xui_api import XuiClient
+
+router = Router()
+router.message.middleware(I18nMiddleware())
+router.callback_query.middleware(I18nMiddleware())
+
+
+@router.message(CommandStart())
+async def cmd_start(message: types.Message, t, lang, db_user):
+    if message.from_user.id in settings.admin_list:
+        await message.answer(
+            "👑 Админ-меню:\n🔧 /testvpn | /setdealer | /topup",
+            reply_markup=admin_menu_kb(),
+        )
+        return
+
+    if db_user.role == "dealer":
+        await message.answer(t("dealer_menu_text"), reply_markup=dealer_menu_kb(t))
+        return
+
+    if not db_user.lang_selected:
+        await message.answer(t("start_msg"), reply_markup=language_kb())
+        return
+
+    await message.answer(t("main_menu_text"), reply_markup=main_menu_kb(t))
+
+
+@router.message(Command("testvpn"))
+async def test_vpn(message: types.Message, t, lang, db_user):
+    if message.from_user.id not in settings.admin_list:
+        return
+    try:
+        link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, "1m")
+        await message.answer(f"🔧 TEST VPN выдан:\n{link}\n📅 до {expire_at.strftime('%d.%m.%Y')}")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка 3x-UI:\n{type(e).__name__}: {e}")
+
+
+@router.message(Command("setdealer"))
+async def set_dealer(message: types.Message, t, lang, db_user):
+    if message.from_user.id not in settings.admin_list:
+        return
+    parts = message.text.split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Формат: /setdealer 123456789")
+        return
+    await db_repo.get_or_create_user(int(parts[1]))
+    await db_repo.set_user_role(int(parts[1]), "dealer")
+    await message.answer(f"✅ {parts[1]} теперь дилер.")
+
+
+@router.message(Command("topup"))
+async def topup(message: types.Message, t, lang, db_user):
+    if message.from_user.id not in settings.admin_list:
+        return
+    parts = message.text.split()
+    if len(parts) != 3 or not parts[1].isdigit():
+        await message.answer("Формат: /topup 123456789 100")
+        return
+    tg_id, amount = int(parts[1]), float(parts[2])
+    user = await db_repo.get_user_by_tg(tg_id)
+    if user is None:
+        await message.answer("Юзер не найден.")
+        return
+    await db_repo.change_dealer_balance(user.id, amount)
+    await db_repo.create_dealer_log(user.id, "topup", None, {"amount": amount})
+    await message.answer(f"✅ Дилеру {tg_id} начислено {amount} кредитов.")
+
+
+@router.callback_query(F.data.startswith("set_lang:"))
+async def set_lang(callback: types.CallbackQuery, t, lang, db_user):
+    new_lang = callback.data.split(":")[1]
+    await db_repo.set_user_lang(callback.from_user.id, new_lang)
+
+    nt = lambda key, **kw: get_text(new_lang, key, **kw)
+    await callback.answer(nt("lang_saved"))
+    await callback.message.edit_text(nt("main_menu_text"), reply_markup=main_menu_kb(nt))
+
+
+@router.callback_query(F.data == "menu:lang")
+async def change_lang(callback: types.CallbackQuery, t, lang, db_user):
+    await callback.answer()
+    await callback.message.edit_text(t("start_msg"), reply_markup=language_kb())
+
+
+@router.callback_query(F.data == "back:main")
+async def back_main(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
+    await state.clear()
+    await callback.answer()
+    await callback.message.edit_text(t("main_menu_text"), reply_markup=main_menu_kb(t))
+
+
+@router.callback_query(F.data == "menu:my_vpn")
+async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
+    await callback.answer()
+    sub = await db_repo.get_subscription(db_user.id)
+
+    if sub is None:
+        used_test = await db_repo.user_has_order(db_user.id, "test")
+        await state.set_state(Purchase.choosing_plan)
+        await callback.message.answer(
+            t("select_plan"), reply_markup=plans_kb(t, with_test=not used_test)
+        )
+        return
+
+    await callback.message.answer(
+        t("active_subscription",
+          expire_date=sub.expire_at.strftime("%d.%m.%Y"),
+          traffic=sub.traffic_limit_gb),
+        reply_markup=sub_link_kb(t),
+    )
+
+
+@router.callback_query(F.data == "menu:buy")
+async def buy(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
+    """Докупка/продление при активной подписке."""
+    await state.set_state(Purchase.choosing_plan)
+    await callback.answer()
+    await callback.message.answer(t("select_plan"), reply_markup=plans_kb(t, with_test=False))
+
+
+@router.callback_query(F.data == "menu:get_link")
+async def get_link(callback: types.CallbackQuery, t, lang, db_user):
+    sub = await db_repo.get_subscription(db_user.id)
+    if sub is None:
+        await callback.answer()
+        return
+    try:
+        client = await XuiClient().get_client(sub.xui_email)
+    except Exception:
+        client = None
+    await callback.answer()
+
+    sub_id = (client or {}).get("subId")
+    if sub_id:
+        link = f"{settings.xui_sub_url.rstrip('/')}/{sub_id}"
+        await callback.message.answer(t("connection_link", link=h(link)))
+    else:
+        await callback.message.answer(t("support_msg", support=settings.support_username))
+
+
+@router.callback_query(F.data == "menu:support")
+async def support(callback: types.CallbackQuery, t, lang, db_user):
+    await callback.answer()
+    await callback.message.answer(t("support_msg", support=settings.support_username))

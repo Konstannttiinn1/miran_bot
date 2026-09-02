@@ -1,0 +1,9 @@
+aiogram
+pydantic-settings
+python-dotenv
+sqlalchemy[asyncio]
+aiosqlite
+asyncpg
+httpx
+fastapi
+uvicorn
