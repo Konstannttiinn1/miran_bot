@@ -8,7 +8,8 @@ from app.keyboards.builders import back_kb, dealer_menu_kb
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
-from app.utils.emojis import strip_custom_emoji_tags\nfrom app.utils.notifications import notify_admins
+from app.utils.emojis import strip_custom_emoji_tags
+from app.utils.notifications import notify_admins
 
 log = logging.getLogger(__name__)
 
