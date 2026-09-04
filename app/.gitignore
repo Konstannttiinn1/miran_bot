@@ -1,6 +1,7 @@
 # Секреты и БД
 .env
 *.db
+*.sqlite3
 
 # Python
 venv/
@@ -8,12 +9,17 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 
 # IDE
 .idea/
 .vscode/
 *.swp
+*.swo
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log

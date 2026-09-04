@@ -48,6 +48,7 @@ class Order(Base):
     amount: Mapped[float] = mapped_column(Float)
     currency: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(default="pending")
+    order_type: Mapped[str] = mapped_column(String, default="purchase")  # purchase / renew / traffic_topup
     external_id: Mapped[str | None] = mapped_column(nullable=True)
     receipt_photo_id: Mapped[str | None] = mapped_column(nullable=True)
     dealer_id: Mapped[int | None] = mapped_column(nullable=True)

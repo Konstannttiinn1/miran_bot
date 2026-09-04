@@ -142,6 +142,10 @@ async def get_subscription(user_id: int) -> Subscription | None:
         return result.scalar_one_or_none()
 
 
+# Алиас для совместимости с payment_checker.py
+get_subscription_by_user_id = get_subscription
+
+
 async def upsert_subscription(user_id: int, xui_email: str, expire_at, traffic_limit_gb: int = 0) -> Subscription:
     async with async_session_factory() as session:
         result = await session.execute(
@@ -163,9 +167,22 @@ async def upsert_subscription(user_id: int, xui_email: str, expire_at, traffic_l
         return sub
 
 
-async def create_order(user_id: int, plan: str, amount: float, currency: str) -> Order:
+async def update_subscription(user_id: int, **fields) -> None:
+    """Обновляет поля подписки (expire_at, traffic_limit_gb и т.д.)."""
     async with async_session_factory() as session:
-        order = Order(user_id=user_id, plan=plan, amount=amount, currency=currency)
+        result = await session.execute(
+            select(Subscription).where(Subscription.user_id == user_id)
+        )
+        sub = result.scalar_one_or_none()
+        if sub is not None:
+            for key, value in fields.items():
+                setattr(sub, key, value)
+            await session.commit()
+
+
+async def create_order(user_id: int, plan: str, amount: float, currency: str, order_type: str = "purchase") -> Order:
+    async with async_session_factory() as session:
+        order = Order(user_id=user_id, plan=plan, amount=amount, currency=currency, order_type=order_type)
         session.add(order)
         await session.commit()
         await session.refresh(order)

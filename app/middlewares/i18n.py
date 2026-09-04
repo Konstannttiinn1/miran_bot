@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from aiogram import BaseMiddleware, types
@@ -10,6 +11,13 @@ from app.utils.emojis import apply_emoji
 LOCALES_DIR = Path(__file__).resolve().parent.parent / "locales"
 
 _translations: dict[str, dict] = {}
+
+_TAG_RE = re.compile(r"</?tg-emoji[^>]*>")
+
+
+def _plain(s: str) -> str:
+    """Убирает tg-emoji теги (всплывашки не умеют HTML)."""
+    return _TAG_RE.sub("", s)
 
 
 def _load_locales() -> None:
@@ -41,7 +49,7 @@ class I18nMiddleware(BaseMiddleware):
             if isinstance(event, types.Message):
                 await event.answer(msg)
             else:
-                await event.answer(msg, show_alert=True)
+                await event.answer(_plain(msg), show_alert=True)
             return
 
         lang = "ru" if tg_user.id in settings.admin_list else (user.lang or "fa")

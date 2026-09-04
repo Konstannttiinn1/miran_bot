@@ -7,7 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import settings
-from app.keyboards.builders import admin_menu_kb
+from app.keyboards.builders import admin_menu_kb, raw_btn
 from app.middlewares.i18n import I18nMiddleware
 from app.repositories import db_repo
 from app.services import subscription as sub_service
@@ -48,13 +48,13 @@ async def user_card_text(user) -> str:
 
 def user_actions_kb(tg_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕7 дней", callback_data=f"admin_act:add7:{tg_id}"),
-         InlineKeyboardButton(text="➖7 дней", callback_data=f"admin_act:sub7:{tg_id}")],
-        [InlineKeyboardButton(text="🔄 Сбросить ссылку", callback_data=f"admin_act:reset:{tg_id}")],
-        [InlineKeyboardButton(text="🚫 Блок", callback_data=f"admin_act:block:{tg_id}"),
-         InlineKeyboardButton(text="✅ Разблок", callback_data=f"admin_act:unblock:{tg_id}")],
-        [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"admin_act:del:{tg_id}")],
-        [InlineKeyboardButton(text="🔙 К списку", callback_data="admin:users")],
+        [raw_btn("➕7 дней", f"admin_act:add7:{tg_id}"),
+         raw_btn("➖7 дней", f"admin_act:sub7:{tg_id}")],
+        [raw_btn("🔄 Сбросить ссылку", f"admin_act:reset:{tg_id}")],
+        [raw_btn("🚫 Блок", f"admin_act:block:{tg_id}"),
+         raw_btn("✅ Разблок", f"admin_act:unblock:{tg_id}")],
+        [raw_btn("🗑 Удалить", f"admin_act:del:{tg_id}")],
+        [raw_btn("🔙 К списку", "admin:users")],
     ])
 
 
@@ -69,15 +69,14 @@ async def users_page_kb(page: int) -> InlineKeyboardMarkup:
             callback_data=f"admin_user:{u.telegram_id}")]
         for u in users
     ]
-    nav = []
+    nav = [InlineKeyboardButton(text=f"{page + 1}/{max(pages, 1)}", callback_data="admin:noop")]
     if page > 0:
-        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"admin_users:{page - 1}"))
-    nav.append(InlineKeyboardButton(text=f"{page + 1}/{max(pages, 1)}", callback_data="admin:noop"))
+        nav.insert(0, raw_btn("⬅️", f"admin_users:{page - 1}"))
     if (page + 1) * PER_PAGE < total:
-        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"admin_users:{page + 1}"))
+        nav.append(raw_btn("➡️", f"admin_users:{page + 1}"))
     rows.append(nav)
-    rows.append([InlineKeyboardButton(text="🔎 Поиск по ID", callback_data="admin:search")])
-    rows.append([InlineKeyboardButton(text=BACK_ADMIN, callback_data="back:admin")])
+    rows.append([raw_btn("🔎 Поиск по ID", "admin:search")])
+    rows.append([raw_btn(BACK_ADMIN, "back:admin")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -197,16 +196,15 @@ async def dealers_list(cb: types.CallbackQuery, t, lang, db_user):
     if not dealers:
         await cb.message.answer("Дилеров нет. Назначь: /setdealer ID",
                                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                    [InlineKeyboardButton(text=BACK_ADMIN, callback_data="back:admin")]]))
+                                    [raw_btn(BACK_ADMIN, "back:admin")]]))
         return
     text = "\n".join(
         f"🤝 {d.username or d.telegram_id} — {float(d.dealer_balance)} кр." for d in dealers
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"➕ {d.username or d.telegram_id}",
-                              callback_data=f"admin_topup:{d.telegram_id}")]
+        [raw_btn(f"➕ {d.username or d.telegram_id}", f"admin_topup:{d.telegram_id}")]
         for d in dealers
-    ] + [[InlineKeyboardButton(text=BACK_ADMIN, callback_data="back:admin")]])
+    ] + [[raw_btn(BACK_ADMIN, "back:admin")]])
     await cb.message.answer(text, reply_markup=kb)
 
 
@@ -242,8 +240,7 @@ async def do_topup(msg: types.Message, t, lang, db_user, state: FSMContext):
 async def show_logs(cb: types.CallbackQuery, t, lang, db_user):
     logs = await db_repo.list_recent_logs(20)
     await cb.answer()
-    back = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=BACK_ADMIN, callback_data="back:admin")]])
+    back = InlineKeyboardMarkup(inline_keyboard=[[raw_btn(BACK_ADMIN, "back:admin")]])
     if not logs:
         await cb.message.answer("Логи пусты.", reply_markup=back)
         return

@@ -32,7 +32,6 @@ async def grant_vpn(user_id: int, telegram_id: int, plan: str) -> tuple[str, obj
 
 
 async def extend_subscription(user, days: int) -> None:
-    """+/- дни в панели и в БД."""
     email = str(user.telegram_id)
     xui = XuiClient()
     await xui.extend_client(email, days)
@@ -47,7 +46,6 @@ async def extend_subscription(user, days: int) -> None:
 
 
 async def reset_link(user) -> str:
-    """Новые uuid+subId — старая ссылка умирает."""
     email = str(user.telegram_id)
     new_sub = "".join(random.choices(string.ascii_lowercase + string.digits, k=16))
     xui = XuiClient()

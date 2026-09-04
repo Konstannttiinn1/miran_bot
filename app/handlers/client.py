@@ -3,15 +3,17 @@ from html import escape as h
 
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
+from aiogram.types import InlineKeyboardMarkup
 
 from app.bot import bot
 from app.config import settings
 from app.handlers.states import Purchase
-from app.keyboards.builders import dealer_confirm_kb, main_menu_kb, payment_kb
+from app.keyboards.builders import dealer_confirm_kb, payment_kb, plans_kb, sub_link_kb
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services import heleket
 from app.services.subscription import grant_vpn
+from app.utils.menu import send_main_menu
 from app.utils.notifications import notify_admins
 from app.utils.tariffs import PLANS
 
@@ -20,6 +22,8 @@ log = logging.getLogger(__name__)
 router = Router()
 router.message.middleware(I18nMiddleware())
 router.callback_query.middleware(I18nMiddleware())
+
+EMPTY_KB = InlineKeyboardMarkup(inline_keyboard=[])
 
 
 @router.callback_query(F.data.startswith("plan:"))
@@ -54,7 +58,7 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
 async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     method = callback.data.split(":")[1]
     data = await state.get_data()
-    plan = data.get("plan", "1m")
+    plan = data.get("plan", "30gb")
     await callback.answer()
 
     if method == "dealer":
@@ -98,7 +102,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
 async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMContext):
     data = await state.get_data()
     order_id = data.get("order_id")
-    plan = data.get("plan", "1m")
+    plan = data.get("plan", "30gb")
     await state.clear()
 
     photo = message.photo[-1].file_id
@@ -138,4 +142,8 @@ async def receipt_wrong_type(message: types.Message, t, lang, db_user):
 async def cancel_purchase(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     await state.clear()
     await callback.answer()
-    await callback.message.edit_text(t("main_menu_text"), reply_markup=main_menu_kb(t))
+    try:
+        await callback.message.edit_reply_markup(reply_markup=EMPTY_KB)
+    except Exception:
+        pass
+    await send_main_menu(callback.message, t)

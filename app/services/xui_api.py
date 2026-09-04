@@ -114,6 +114,35 @@ class XuiClient:
         base = max(current, int(time.time() * 1000))
         await self.update_client(email, expiryTime=base + days * 86400 * 1000)
 
+    async def add_traffic(self, email: str, extra_gb: int) -> None:
+        """Добавляет трафик к существующему лимиту (не сбрасывает использованный)."""
+        client = await self.get_client(email)
+        if client is None:
+            raise XuiApiError(f"client {email} not found in panel")
+
+        current_total = client.get("totalGB") or 0
+        extra_bytes = int(extra_gb * 1024 ** 3)
+        new_total = current_total + extra_bytes
+
+        await self.update_client(email, totalGB=new_total)
+        log.info("3x-UI: клиенту %s добавлено %d ГБ трафика", email, extra_gb)
+
+    async def get_traffic_usage(self, email: str) -> tuple[float, float]:
+        """Возвращает (использовано ГБ, всего ГБ) для клиента."""
+        client = await self.get_client(email)
+        if client is None:
+            raise XuiApiError(f"client {email} not found in panel")
+
+        up = client.get("up") or 0  # загружено байт
+        down = client.get("down") or 0  # скачано байт
+        total = client.get("totalGB") or 0
+
+        used_bytes = up + down
+        used_gb = used_bytes / (1024 ** 3)
+        total_gb = total / (1024 ** 3)
+
+        return used_gb, total_gb
+
     async def set_enabled(self, email: str, enabled: bool) -> None:
         await self.update_client(email, enable=enabled)
 
