@@ -44,6 +44,17 @@ async def cmd_start(message: types.Message, t, lang, db_user):
     await send_main_menu(message, t)
 
 
+@router.message(Command("paysupport"))
+async def pay_support(message: types.Message, t, lang, db_user):
+    note = {
+        "fa": "پشتیبانی Telegram نمی‌تواند پرداخت‌های این ربات را بررسی کند.",
+        "ru": "Поддержка Telegram не сможет решить вопрос с покупкой в этом боте.",
+    }.get(lang, "Telegram Support cannot resolve purchases made through this bot.")
+    await message.answer(
+        t("support_msg", support=settings.support_username) + f"\n\n{note}"
+    )
+
+
 @router.message(Command("testvpn"))
 async def test_vpn(message: types.Message, t, lang, db_user):
     if message.from_user.id not in settings.admin_list:
@@ -137,7 +148,7 @@ async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMCont
         await send_with_logo(
             callback,
             t("select_plan"),
-            reply_markup=plans_kb(t, with_test=not used_test)
+            reply_markup=plans_kb(t, with_test=not used_test, lang=lang)
         )
         return
 
@@ -154,7 +165,7 @@ async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMCont
 async def buy(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     await state.set_state(Purchase.choosing_plan)
     await callback.answer()
-    await send_with_logo(callback, t("select_plan"), reply_markup=plans_kb(t, with_test=False))
+    await send_with_logo(callback, t("select_plan"), reply_markup=plans_kb(t, with_test=False, lang=lang))
 
 
 @router.callback_query(F.data == "menu:get_link")
