@@ -3,6 +3,7 @@ import logging
 from html import escape as h
 
 from app.bot import bot
+from app.config import settings
 from app.middlewares.i18n import get_text
 from app.repositories import db_repo
 from app.services import heleket
@@ -13,7 +14,10 @@ log = logging.getLogger(__name__)
 
 
 async def check_pending_payments() -> None:
-    """Опрашивает Heleket по всем ожидающим крипто-заказам."""
+    """Опрашивает Heleket по ожидающим крипто-заказам."""
+    if not settings.heleket_enabled or not heleket.is_configured():
+        return
+
     orders = await db_repo.list_pending_crypto_orders()
     for order in orders:
         try:
@@ -25,18 +29,39 @@ async def check_pending_payments() -> None:
         if not heleket.is_paid(payment):
             continue
 
-        await db_repo.update_order(order.id, status="paid")
         user = await db_repo.get_user_by_id(order.user_id)
         if user is None:
+            await db_repo.update_order(order.id, status="crypto_paid_user_missing")
+            await notify_admins(
+                f"🚨 Heleket: заказ #{order.id} оплачен, но пользователь не найден"
+            )
             continue
 
-        link, expire_at = await grant_vpn(user.id, user.telegram_id, order.plan)
+        # Сначала фиксируем, что деньги подтверждены, но VPN ещё не выдан.
+        await db_repo.update_order(order.id, status="crypto_paid_processing")
+        try:
+            link, expire_at = await grant_vpn(user.id, user.telegram_id, order.plan)
+        except Exception:
+            await db_repo.update_order(order.id, status="crypto_paid_grant_failed")
+            log.exception("Heleket: оплата есть, VPN не выдан по заказу %s", order.id)
+            await notify_admins(
+                f"🚨 Heleket оплачен, но VPN не выдан: заказ #{order.id} ({order.plan})"
+            )
+            continue
+
+        await db_repo.update_order(order.id, status="paid")
         await bot.send_message(
             user.telegram_id,
-            get_text(user.lang, "payment_success",
-                     link=h(link), expire_date=expire_at.strftime("%d.%m.%Y")),
+            get_text(
+                user.lang,
+                "payment_success",
+                link=h(link),
+                expire_date=expire_at.strftime("%d.%m.%Y"),
+            ),
         )
-        await notify_admins(f"💎 Крипто-оплата заказа #{order.id} ({order.plan}) — VPN выдан")
+        await notify_admins(
+            f"💎 Крипто-оплата заказа #{order.id} ({order.plan}) — VPN выдан"
+        )
         log.info("Заказ %s оплачен, VPN выдан", order.id)
 
 
