@@ -14,7 +14,8 @@ from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
 from app.services.xui_api import XuiClient
-from app.utils.emojis import apply_emoji, strip_custom_emoji_tags\nfrom app.utils.menu import send_main_menu, send_with_logo
+from app.utils.emojis import strip_custom_emoji_tags
+from app.utils.menu import send_main_menu, send_with_logo
 
 router = Router()
 router.message.middleware(I18nMiddleware())
