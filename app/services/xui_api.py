@@ -36,11 +36,16 @@ class XuiClient:
     async def add_client(self, email: str, days: int, limit_ip: int = 1, traffic_gb: int = 0) -> str:
         """Создаёт клиента, а если он уже есть — обновляет срок/трафик."""
         http = await self._client()
-        expiry = int((time.time() + days * 86400) * 1000)
+        now_ms = int(time.time() * 1000)
         traffic = int(traffic_gb * 1024 ** 3)
 
         existing = await self.get_client(email)
         if existing is not None:
+            try:
+                current_expiry = int(existing.get("expiryTime") or 0)
+            except (TypeError, ValueError):
+                current_expiry = 0
+            expiry = max(current_expiry, now_ms) + days * 86400 * 1000
             sub_id = existing.get("subId") or "".join(
                 random.choices(string.ascii_lowercase + string.digits, k=16))
             await self.update_client(
@@ -50,6 +55,7 @@ class XuiClient:
             log.info("3x-UI: клиент %s обновлён", email)
             return sub_id
 
+        expiry = now_ms + days * 86400 * 1000
         sub_id = "".join(random.choices(string.ascii_lowercase + string.digits, k=16))
         client = {
             "id": str(uuid_lib.uuid4()),
