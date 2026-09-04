@@ -66,35 +66,72 @@ async def test_vpn(message: types.Message, t, lang, db_user):
         await message.answer(f"❌ Ошибка 3x-UI:\n{type(e).__name__}: {e}")
 
 
+async def _resolve_known_user(ref: str):
+    ref = ref.strip()
+    if ref.isdigit():
+        return await db_repo.get_user_by_tg(int(ref))
+    if ref.startswith("@"):
+        return await db_repo.get_user_by_username(ref)
+    return None
+
+
 @router.message(Command("setdealer"))
 async def set_dealer(message: types.Message, t, lang, db_user):
     if message.from_user.id not in settings.admin_list:
         return
-    parts = message.text.split()
-    if len(parts) != 2 or not parts[1].isdigit():
-        await message.answer("Формат: /setdealer 123456789")
+    parts = (message.text or "").split()
+    if len(parts) != 2:
+        await message.answer("Формат: /setdealer 123456789 или /setdealer @username")
         return
-    await db_repo.get_or_create_user(int(parts[1]))
-    await db_repo.set_user_role(int(parts[1]), "dealer")
-    await message.answer(f"✅ {parts[1]} теперь дилер.")
+
+    ref = parts[1]
+    user = await _resolve_known_user(ref)
+    if user is None and ref.isdigit():
+        user = await db_repo.get_or_create_user(int(ref))
+    if user is None:
+        await message.answer(
+            "Пользователь не найден. Для @username он должен хотя бы один раз открыть бота."
+        )
+        return
+
+    await db_repo.set_user_role(user.telegram_id, "dealer")
+    dealer_name = f"@{user.username}" if user.username else str(user.telegram_id)
+    await message.answer(f"✅ {dealer_name} теперь дилер.")
 
 
 @router.message(Command("topup"))
 async def topup(message: types.Message, t, lang, db_user):
     if message.from_user.id not in settings.admin_list:
         return
-    parts = message.text.split()
-    if len(parts) != 3 or not parts[1].isdigit():
-        await message.answer("Формат: /topup 123456789 100")
+    parts = (message.text or "").split()
+    if len(parts) != 3:
+        await message.answer("Формат: /topup ID 100000 или /topup @username 100000")
         return
-    tg_id, amount = int(parts[1]), float(parts[2])
-    user = await db_repo.get_user_by_tg(tg_id)
-    if user is None:
-        await message.answer("Юзер не найден.")
+
+    user = await _resolve_known_user(parts[1])
+    if user is None or user.role != "dealer":
+        await message.answer("Дилер не найден.")
         return
+
+    try:
+        amount = float(parts[2].replace(",", "."))
+    except ValueError:
+        await message.answer("Сумма должна быть числом.")
+        return
+    if amount <= 0:
+        await message.answer("Сумма должна быть больше нуля.")
+        return
+
     await db_repo.change_dealer_balance(user.id, amount)
-    await db_repo.create_dealer_log(user.id, "topup", None, {"amount": amount})
-    await message.answer(f"✅ Дилеру {tg_id} начислено {amount} кредитов.")
+    await db_repo.create_dealer_log(
+        user.id,
+        "topup",
+        None,
+        {"amount": amount, "by": db_user.telegram_id},
+    )
+    await message.answer(
+        f"✅ Дилеру @{user.username or user.telegram_id} начислено {amount:,.0f} туман."
+    )
 
 
 @router.callback_query(F.data.startswith("set_lang:"))
