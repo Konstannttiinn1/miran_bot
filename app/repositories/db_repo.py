@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.database.engine import async_session_factory
 from app.database.models import DealerLog, Order, Subscription, User
@@ -24,6 +24,18 @@ async def get_user_by_id(user_id: int) -> User | None:
 async def get_user_by_tg(telegram_id: int) -> User | None:
     async with async_session_factory() as session:
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        return result.scalar_one_or_none()
+
+
+async def get_user_by_username(username: str) -> User | None:
+    """Ищет уже известного боту пользователя по username, без @."""
+    clean = username.lstrip("@").strip().lower()
+    if not clean:
+        return None
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(User).where(func.lower(User.username) == clean)
+        )
         return result.scalar_one_or_none()
 
 
@@ -85,6 +97,123 @@ async def change_dealer_balance(user_id: int, delta: float) -> None:
         if user is not None:
             user.dealer_balance = float(user.dealer_balance) + delta
             await session.commit()
+
+
+async def claim_dealer_order(order_id: int, dealer_id: int) -> tuple[str, Order | None]:
+    """Атомарно резервирует заказ за дилером и списывает его внутренний баланс."""
+    async with async_session_factory() as session:
+        async with session.begin():
+            order = (
+                await session.execute(
+                    select(Order).where(Order.id == order_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if order is None or order.status != "pending_dealer":
+                return "processed", order
+
+            dealer = (
+                await session.execute(
+                    select(User).where(User.id == dealer_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if dealer is None or dealer.role != "dealer":
+                return "not_dealer", order
+
+            price = float(order.amount)
+            if float(dealer.dealer_balance) < price:
+                return "insufficient", order
+
+            dealer.dealer_balance = float(dealer.dealer_balance) - price
+            order.status = "dealer_processing"
+            order.dealer_id = dealer_id
+            await session.flush()
+            return "claimed", order
+
+
+async def complete_dealer_order(order_id: int, dealer_id: int) -> bool:
+    async with async_session_factory() as session:
+        async with session.begin():
+            order = (
+                await session.execute(
+                    select(Order).where(Order.id == order_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if (
+                order is None
+                or order.status != "dealer_processing"
+                or order.dealer_id != dealer_id
+            ):
+                return False
+            order.status = "paid"
+            session.add(
+                DealerLog(
+                    dealer_id=dealer_id,
+                    action="confirm",
+                    order_id=order_id,
+                    details={"amount": float(order.amount)},
+                )
+            )
+            return True
+
+
+async def rollback_dealer_order(order_id: int, dealer_id: int) -> bool:
+    """Возвращает баланс, если после подтверждения не удалось выдать VPN."""
+    async with async_session_factory() as session:
+        async with session.begin():
+            order = (
+                await session.execute(
+                    select(Order).where(Order.id == order_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if (
+                order is None
+                or order.status != "dealer_processing"
+                or order.dealer_id != dealer_id
+            ):
+                return False
+
+            dealer = (
+                await session.execute(
+                    select(User).where(User.id == dealer_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if dealer is not None:
+                dealer.dealer_balance = float(dealer.dealer_balance) + float(order.amount)
+
+            order.status = "failed"
+            session.add(
+                DealerLog(
+                    dealer_id=dealer_id,
+                    action="rollback",
+                    order_id=order_id,
+                    details={"amount": float(order.amount)},
+                )
+            )
+            return True
+
+
+async def reject_dealer_order(order_id: int, dealer_id: int) -> Order | None:
+    """Первый дилер, отклонивший ещё ожидающий заказ, закрывает его."""
+    async with async_session_factory() as session:
+        async with session.begin():
+            order = (
+                await session.execute(
+                    select(Order).where(Order.id == order_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if order is None or order.status != "pending_dealer":
+                return None
+            order.status = "failed"
+            order.dealer_id = dealer_id
+            session.add(
+                DealerLog(
+                    dealer_id=dealer_id,
+                    action="reject",
+                    order_id=order_id,
+                )
+            )
+            await session.flush()
+            return order
 
 
 async def create_dealer_log(dealer_id: int, action: str, order_id: int | None = None, details: dict | None = None) -> None:
