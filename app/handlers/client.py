@@ -13,9 +13,9 @@ from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services import heleket
 from app.services.subscription import grant_vpn
-from app.utils.menu import send_main_menu
+from app.utils.menu import send_main_menu, send_with_logo
 from app.utils.notifications import notify_admins
-from app.utils.tariffs import PLANS
+from app.utils.tariffs import PLANS, get_price_display
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
     await state.update_data(plan=plan)
     await state.set_state(Purchase.choosing_payment)
     await callback.answer()
-    await callback.message.edit_text(t("select_payment"), reply_markup=payment_kb(t))
+    await send_with_logo(callback, t("select_payment"), reply_markup=payment_kb(t))
 
 
 @router.callback_query(F.data.startswith("pay:"))
@@ -62,11 +62,13 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
     await callback.answer()
 
     if method == "dealer":
-        price = PLANS[plan]["price_usd"]
-        order = await db_repo.create_order(db_user.id, plan, price, "dealer_credit")
+        # Для дилера: цена в туманах с 50% скидкой
+        price_toman = PLANS[plan]["price_dealer_toman"]
+        order = await db_repo.create_order(db_user.id, plan, price_toman, "dealer_credit")
         await state.update_data(plan=plan, order_id=order.id)
         await state.set_state(Purchase.waiting_receipt)
-        await callback.message.answer(
+        await send_with_logo(
+            callback,
             t("dealer_pay_instructions", card=settings.dealer_card_number, order_id=order.id)
         )
         return
@@ -75,27 +77,29 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
 
     if method == "heleket":
         if not settings.heleket_enabled:
-            await callback.message.answer(t("pay_temporarily_disabled"))
+            await send_with_logo(callback, t("pay_temporarily_disabled"))
             return
 
-        price = PLANS[plan]["price_usd"]
-        order = await db_repo.create_order(db_user.id, plan, price, "usdt")
+        # Для крипто: цена в USD
+        price_usd = PLANS[plan]["price_usd"]
+        order = await db_repo.create_order(db_user.id, plan, price_usd, "usdt")
         try:
-            invoice = await heleket.create_invoice(price, order.id)
+            invoice = await heleket.create_invoice(price_usd, order.id)
         except Exception:
             log.exception("Heleket: ошибка создания инвойса")
             await db_repo.update_order(order.id, status="failed")
-            await callback.message.answer(t("payment_error"))
+            await send_with_logo(callback, t("payment_error"))
             return
 
         await db_repo.update_order(order.id, external_id=invoice["uuid"])
-        await callback.message.answer(
+        await send_with_logo(
+            callback,
             t("invoice_created", order_id=order.id, url=invoice["url"]),
             disable_web_page_preview=True,
         )
         return
 
-    await callback.message.answer(t("payment_placeholder") + f"\n\n🧾 {plan} ➜ {method}")
+    await send_with_logo(callback, t("payment_placeholder") + f"\n\n {plan} ➜ {method}")
 
 
 @router.message(Purchase.waiting_receipt, F.photo)
@@ -112,6 +116,8 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
     dealers = await db_repo.list_dealers()
     for d in dealers:
         try:
+            # Для дилера: показываем цену в туманах (50% скидка)
+            dealer_price = PLANS[plan]["price_dealer_toman"]
             await bot.send_photo(
                 d.telegram_id,
                 photo,
@@ -121,7 +127,7 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
                     order_id=order_id,
                     username=db_user.username or db_user.telegram_id,
                     plan=plan,
-                    amount=PLANS[plan]["price_usd"],
+                    amount=dealer_price,
                 ),
                 reply_markup=dealer_confirm_kb(order_id),
             )

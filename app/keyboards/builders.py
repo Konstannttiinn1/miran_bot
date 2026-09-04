@@ -1,34 +1,42 @@
-import re
-
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import settings
 from app.utils.emojis import button_parts
 from app.utils.tariffs import PLANS
 
-_TAG_RE = re.compile(r"</?tg-emoji[^>]*>")
-
-
-def _p(text: str) -> str:
-    return _TAG_RE.sub("", text)
-
 
 def raw_btn(text: str, callback: str, **kw) -> InlineKeyboardButton:
+    """Кнопка: кастомная иконка + текст БЕЗ эмодзи."""
     if settings.use_custom_emoji:
         label, icon = button_parts(text, True)
-        if icon and label:
-            return InlineKeyboardButton(text=label, callback_data=callback,
-                                        icon_custom_emoji_id=icon, **kw)
-    return InlineKeyboardButton(text=_p(text), callback_data=callback, **kw)
+        if icon:
+            return InlineKeyboardButton(
+                text=label if label else " ",
+                callback_data=callback,
+                icon_custom_emoji_id=icon,
+                **kw
+            )
+    return InlineKeyboardButton(text=text, callback_data=callback, **kw)
 
 
 def _btn(t, key: str, callback: str, **kw) -> InlineKeyboardButton:
-    return raw_btn(_p(t(key)), callback, **kw)
+    """Кнопка из локали: кастомная иконка + текст БЕЗ эмодзи."""
+    text = t(key)
+    if settings.use_custom_emoji:
+        label, icon = button_parts(text, True)
+        if icon:
+            return InlineKeyboardButton(
+                text=label if label else " ",
+                callback_data=callback,
+                icon_custom_emoji_id=icon,
+                **kw
+            )
+    return InlineKeyboardButton(text=text, callback_data=callback, **kw)
 
 
 LANG_BUTTONS = {
-    "fa": ("🇮🇷 فارسی", "set_lang:fa"),
-    "en": ("🇬🇧 English", "set_lang:en"),
+    "fa": ("🇷 فارسی", "set_lang:fa"),
+    "en": ("🇬 English", "set_lang:en"),
     "ru": ("🇷🇺 Русский", "set_lang:ru"),
 }
 

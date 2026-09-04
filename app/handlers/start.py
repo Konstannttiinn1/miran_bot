@@ -14,7 +14,7 @@ from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
 from app.services.xui_api import XuiClient
-from app.utils.menu import send_main_menu
+from app.utils.menu import send_main_menu, send_with_logo
 
 router = Router()
 router.message.middleware(I18nMiddleware())
@@ -27,13 +27,13 @@ EMPTY_KB = InlineKeyboardMarkup(inline_keyboard=[])
 async def cmd_start(message: types.Message, t, lang, db_user):
     if message.from_user.id in settings.admin_list:
         await message.answer(
-            "👑 Админ-меню:\n🔧 /testvpn | /setdealer | /topup",
+            " Админ-меню:\n🔧 /testvpn | /setdealer | /topup",
             reply_markup=admin_menu_kb(),
         )
         return
 
     if db_user.role == "dealer":
-        await message.answer(t("dealer_menu_text"), reply_markup=dealer_menu_kb(t))
+        await send_with_logo(message, t("dealer_menu_text"), reply_markup=dealer_menu_kb(t))
         return
 
     if not db_user.lang_selected:
@@ -97,7 +97,7 @@ async def set_lang(callback: types.CallbackQuery, t, lang, db_user):
     except Exception:
         pass
     if db_user.role == "dealer":
-        await callback.message.answer(nt("dealer_menu_text"), reply_markup=dealer_menu_kb(nt))
+        await send_with_logo(callback, nt("dealer_menu_text"), reply_markup=dealer_menu_kb(nt))
     else:
         await send_main_menu(callback.message, nt)
 
@@ -127,17 +127,21 @@ async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMCont
 
     if sub is None or sub.expire_at <= now:
         if sub is not None:
-            await callback.message.answer(
+            await send_with_logo(
+                callback,
                 t("subscription_expired", expire_date=sub.expire_at.strftime("%d.%m.%Y"))
             )
         used_test = await db_repo.user_has_order(db_user.id, "test")
         await state.set_state(Purchase.choosing_plan)
-        await callback.message.answer(
-            t("select_plan"), reply_markup=plans_kb(t, with_test=not used_test)
+        await send_with_logo(
+            callback,
+            t("select_plan"),
+            reply_markup=plans_kb(t, with_test=not used_test)
         )
         return
 
-    await callback.message.answer(
+    await send_with_logo(
+        callback,
         t("active_subscription",
           expire_date=sub.expire_at.strftime("%d.%m.%Y"),
           traffic=sub.traffic_limit_gb),
@@ -149,7 +153,7 @@ async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMCont
 async def buy(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     await state.set_state(Purchase.choosing_plan)
     await callback.answer()
-    await callback.message.answer(t("select_plan"), reply_markup=plans_kb(t, with_test=False))
+    await send_with_logo(callback, t("select_plan"), reply_markup=plans_kb(t, with_test=False))
 
 
 @router.callback_query(F.data == "menu:get_link")
@@ -167,12 +171,12 @@ async def get_link(callback: types.CallbackQuery, t, lang, db_user):
     sub_id = (client or {}).get("subId")
     if sub_id:
         link = f"{settings.xui_sub_url.rstrip('/')}/{sub_id}"
-        await callback.message.answer(t("connection_link", link=h(link)))
+        await send_with_logo(callback, t("connection_link", link=h(link)))
     else:
-        await callback.message.answer(t("support_msg", support=settings.support_username))
+        await send_with_logo(callback, t("support_msg", support=settings.support_username))
 
 
 @router.callback_query(F.data == "menu:support")
 async def support(callback: types.CallbackQuery, t, lang, db_user):
     await callback.answer()
-    await callback.message.answer(t("support_msg", support=settings.support_username))
+    await send_with_logo(callback, t("support_msg", support=settings.support_username))

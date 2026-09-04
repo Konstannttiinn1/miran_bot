@@ -2,3 +2,8 @@
 *.db
 __pycache__/
 .idea/
+.env
+*.db
+__pycache__/
+.idea/
+venv/
