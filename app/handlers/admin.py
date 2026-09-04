@@ -42,7 +42,7 @@ async def user_card_text(user) -> str:
     else:
         lines.append("📅 Подписки нет")
     if user.role == "dealer":
-        lines.append(f"💳 Баланс: {float(user.dealer_balance)} кр.")
+        lines.append(f"💳 Баланс: {float(user.dealer_balance):,.0f} туман")
     return "\n".join(lines)
 
 
@@ -194,12 +194,12 @@ async def dealers_list(cb: types.CallbackQuery, t, lang, db_user):
     dealers = await db_repo.list_dealers()
     await cb.answer()
     if not dealers:
-        await cb.message.answer("Дилеров нет. Назначь: /setdealer ID",
+        await cb.message.answer("Дилеров нет. Назначь: /setdealer ID или /setdealer @username",
                                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                                     [raw_btn(BACK_ADMIN, "back:admin")]]))
         return
     text = "\n".join(
-        f"🤝 {d.username or d.telegram_id} — {float(d.dealer_balance)} кр." for d in dealers
+        f"🤝 @{d.username or d.telegram_id} — {float(d.dealer_balance):,.0f} туман" for d in dealers
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [raw_btn(f"➕ {d.username or d.telegram_id}", f"admin_topup:{d.telegram_id}")]
@@ -222,9 +222,12 @@ async def do_topup(msg: types.Message, t, lang, db_user, state: FSMContext):
     data = await state.get_data()
     await state.clear()
     try:
-        amount = float((msg.text or "").strip())
+        amount = float((msg.text or "").strip().replace(",", "."))
     except ValueError:
         await msg.answer("Это не число.")
+        return
+    if amount <= 0:
+        await msg.answer("Сумма должна быть больше нуля.")
         return
     dealer = await db_repo.get_user_by_tg(data["dealer_tg"])
     if dealer is None:
@@ -233,7 +236,9 @@ async def do_topup(msg: types.Message, t, lang, db_user, state: FSMContext):
     await db_repo.change_dealer_balance(dealer.id, amount)
     await db_repo.create_dealer_log(dealer.id, "topup", None,
                                     {"amount": amount, "by": db_user.telegram_id})
-    await msg.answer(f"✅ Начислено {amount} → {dealer.username or dealer.telegram_id}")
+    await msg.answer(
+        f"✅ Начислено {amount:,.0f} туман → @{dealer.username or dealer.telegram_id}"
+    )
 
 
 @router.callback_query(F.data == "admin:logs")
