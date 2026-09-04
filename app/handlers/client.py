@@ -13,7 +13,8 @@ from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services import heleket
 from app.services.subscription import grant_vpn
-from app.utils.emojis import apply_emoji\nfrom app.utils.menu import send_main_menu, send_with_logo
+from app.utils.emojis import apply_emoji
+from app.utils.menu import send_main_menu, send_with_logo
 from app.utils.notifications import notify_admins
 from app.utils.tariffs import PLANS, get_price_display
 
