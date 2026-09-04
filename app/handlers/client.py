@@ -45,7 +45,11 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
             return
         await db_repo.update_order(order.id, status="paid")
         await callback.answer()
-        await callback.message.answer(t("test_activated") + f"\n🔗 {h(link)}")
+        await callback.message.answer(
+            t("test_activated")
+            + "\n"
+            + apply_emoji(f"🔗 {h(link)}", settings.use_custom_emoji)
+        )
         return
 
     await state.update_data(plan=plan)
