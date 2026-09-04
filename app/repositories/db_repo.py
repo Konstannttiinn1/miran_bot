@@ -13,6 +13,10 @@ async def get_or_create_user(telegram_id: int, username: str | None = None) -> U
             session.add(user)
             await session.commit()
             await session.refresh(user)
+        elif username and user.username != username:
+            user.username = username
+            await session.commit()
+            await session.refresh(user)
         return user
 
 
