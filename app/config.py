@@ -8,10 +8,10 @@ class Settings(BaseSettings):
 
     # Telegram
     bot_token: str = ""
-    admin_ids: str = ""  # формат: "111,222"
+    admin_ids: str = ""
     support_username: str = "@support"
 
-    # База данных (локально sqlite, на сервере postgres)
+    # База данных
     db_url: str = "sqlite+aiosqlite:///vpn.db"
 
     # Панель 3x-UI
@@ -31,9 +31,11 @@ class Settings(BaseSettings):
 
     # Локальные цены / Telegram Stars
     rub_per_usd: float = 90.0
+    toman_per_usd: float = 61000.0
     stars_reward_usd: float = 0.013
 
-    # Дилер
+    # Дилер: внутренний баланс всегда в USD
+    dealer_discount: float = 0.5
     dealer_card_number: str = "0000-0000-0000-0000"
     dealer_contact: str = "@dealer"
 

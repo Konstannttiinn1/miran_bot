@@ -3,13 +3,13 @@
 from math import ceil, floor
 
 PLANS: dict[str, dict] = {
-    "test": {"days": 1, "price_usd": 0, "price_toman": 0, "price_dealer_toman": 0, "traffic_gb": 1},
-    "10gb": {"days": 30, "price_usd": 1.15, "price_toman": 70000, "price_dealer_toman": 35000, "traffic_gb": 10},
-    "20gb": {"days": 30, "price_usd": 2.30, "price_toman": 140000, "price_dealer_toman": 70000, "traffic_gb": 20},
-    "30gb": {"days": 30, "price_usd": 3.45, "price_toman": 210000, "price_dealer_toman": 105000, "traffic_gb": 30},
-    "40gb": {"days": 30, "price_usd": 4.35, "price_toman": 265000, "price_dealer_toman": 132500, "traffic_gb": 40},
-    "50gb": {"days": 30, "price_usd": 5.25, "price_toman": 320000, "price_dealer_toman": 160000, "traffic_gb": 50},
-    "100gb": {"days": 30, "price_usd": 9.85, "price_toman": 600000, "price_dealer_toman": 300000, "traffic_gb": 100},
+    "test": {"days": 1, "price_usd": 0, "price_toman": 0, "traffic_gb": 1},
+    "10gb": {"days": 30, "price_usd": 1.15, "price_toman": 70000, "traffic_gb": 10},
+    "20gb": {"days": 30, "price_usd": 2.30, "price_toman": 140000, "traffic_gb": 20},
+    "30gb": {"days": 30, "price_usd": 3.45, "price_toman": 210000, "traffic_gb": 30},
+    "40gb": {"days": 30, "price_usd": 4.35, "price_toman": 265000, "traffic_gb": 40},
+    "50gb": {"days": 30, "price_usd": 5.25, "price_toman": 320000, "traffic_gb": 50},
+    "100gb": {"days": 30, "price_usd": 9.85, "price_toman": 600000, "traffic_gb": 100},
 }
 
 TEST_TARIFF = "test"
@@ -55,5 +55,15 @@ def get_plan_button_text(plan: str, lang: str, rub_per_usd: float = 90.0) -> str
     return f"🕒 1 month | {traffic} GB — {price}"
 
 
-def get_dealer_price(plan: str) -> int:
-    return int(PLANS[plan]["price_dealer_toman"])
+def get_dealer_debit_usd(
+    plan: str,
+    toman_per_usd: float,
+    dealer_discount: float = 0.5,
+) -> float:
+    """Конвертирует розничную цену в туманах в USD и применяет дилерскую скидку."""
+    if toman_per_usd <= 0:
+        raise ValueError("toman_per_usd must be positive")
+    if not 0 < dealer_discount <= 1:
+        raise ValueError("dealer_discount must be in (0, 1]")
+    retail_toman = float(PLANS[plan]["price_toman"])
+    return round((retail_toman / toman_per_usd) * dealer_discount, 3)

@@ -28,7 +28,7 @@ EMPTY_KB = InlineKeyboardMarkup(inline_keyboard=[])
 async def cmd_start(message: types.Message, t, lang, db_user):
     if message.from_user.id in settings.admin_list:
         await message.answer(
-            " Админ-меню:\n🔧 /testvpn | /setdealer | /topup",
+            "👑 Админ-меню:\n🔧 /testvpn | /setdealer | /topup",
             reply_markup=admin_menu_kb(),
         )
         return
@@ -105,7 +105,7 @@ async def topup(message: types.Message, t, lang, db_user):
         return
     parts = (message.text or "").split()
     if len(parts) != 3:
-        await message.answer("Формат: /topup ID 100000 или /topup @username 100000")
+        await message.answer("Формат: /topup ID 10 или /topup @username 10")
         return
 
     user = await _resolve_known_user(parts[1])
@@ -127,10 +127,10 @@ async def topup(message: types.Message, t, lang, db_user):
         user.id,
         "topup",
         None,
-        {"amount": amount, "by": db_user.telegram_id},
+        {"amount_usd": amount, "by": db_user.telegram_id},
     )
     await message.answer(
-        f"✅ Дилеру @{user.username or user.telegram_id} начислено {amount:,.0f} туман."
+        f"✅ Дилеру @{user.username or user.telegram_id} начислено ${amount:,.2f}."
     )
 
 

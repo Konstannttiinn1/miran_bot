@@ -25,8 +25,7 @@ async def _dealer_only(callback: types.CallbackQuery, db_user) -> bool:
 
 
 def _balance_text(value: float) -> str:
-    amount = float(value)
-    return f"{int(amount):,}" if amount.is_integer() else f"{amount:,.2f}"
+    return f"${float(value):,.3f}".rstrip("0").rstrip(".")
 
 
 @router.callback_query(F.data == "back:dealer")
@@ -132,7 +131,7 @@ async def dealer_approve(callback: types.CallbackQuery, t, lang, db_user):
     await callback.message.answer("✅ Order confirmed. VPN activated.")
     await notify_admins(
         f"💰 Дилер {db_user.username or db_user.telegram_id} подтвердил заказ "
-        f"#{order_id} ({order.plan}); списано {float(order.amount):,.0f} туман."
+        f"#{order_id} ({order.plan}); списано ${float(order.amount):.3f}."
     )
     log.info("Dealer %s confirmed order %s", db_user.telegram_id, order_id)
 

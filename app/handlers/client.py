@@ -16,7 +16,7 @@ from app.services.subscription import grant_vpn
 from app.utils.emojis import apply_emoji
 from app.utils.menu import send_main_menu, send_with_logo
 from app.utils.notifications import notify_admins
-from app.utils.tariffs import PLANS, get_stars_price
+from app.utils.tariffs import PLANS, get_dealer_debit_usd, get_stars_price
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -32,6 +32,11 @@ def _format_toman(amount: int | float, lang: str) -> str:
         text = text.translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")).replace(",", "،")
         return f"{text} تومان"
     return f"{text} Toman"
+
+
+def _format_usd(amount: int | float) -> str:
+    text = f"{float(amount):.3f}".rstrip("0").rstrip(".")
+    return f"${text}"
 
 
 def _stars_payload(order_id: int, user_id: int, plan: str) -> str:
@@ -145,9 +150,13 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
 
     if method == "dealer":
         retail_toman = int(PLANS[plan]["price_toman"])
-        dealer_toman = int(PLANS[plan]["price_dealer_toman"])
-        # order.amount хранит именно внутреннее списание дилера (50%).
-        order = await db_repo.create_order(db_user.id, plan, dealer_toman, "dealer_credit")
+        dealer_usd = get_dealer_debit_usd(
+            plan,
+            settings.toman_per_usd,
+            settings.dealer_discount,
+        )
+        # order.amount для дилерского заказа всегда хранится в USD.
+        order = await db_repo.create_order(db_user.id, plan, dealer_usd, "usd")
         await state.update_data(plan=plan, order_id=order.id)
         await state.set_state(Purchase.waiting_receipt)
         await send_with_logo(
@@ -168,7 +177,6 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
             await send_with_logo(callback, t("pay_temporarily_disabled"))
             return
         price_usd = PLANS[plan]["price_usd"]
-        # currency здесь остаётся usdt как маркер крипто-заказа для payment_checker.
         order = await db_repo.create_order(db_user.id, plan, price_usd, "usdt")
         try:
             invoice = await heleket.create_invoice(price_usd, order.id)
@@ -288,7 +296,11 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
     for d in dealers:
         try:
             client_price = int(PLANS[plan]["price_toman"])
-            dealer_price = int(PLANS[plan]["price_dealer_toman"])
+            dealer_price_usd = get_dealer_debit_usd(
+                plan,
+                settings.toman_per_usd,
+                settings.dealer_discount,
+            )
             await bot.send_photo(
                 d.telegram_id,
                 photo,
@@ -299,7 +311,7 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
                     username=db_user.username or db_user.telegram_id,
                     plan=plan,
                     client_amount=_format_toman(client_price, d.lang),
-                    dealer_amount=_format_toman(dealer_price, d.lang),
+                    dealer_amount=_format_usd(dealer_price_usd),
                 ),
                 reply_markup=dealer_confirm_kb(order_id),
             )
