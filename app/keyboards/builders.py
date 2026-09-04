@@ -1,42 +1,35 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import settings
-from app.utils.emojis import button_parts
+from app.utils.emojis import button_parts, strip_custom_emoji_tags
 from app.utils.tariffs import PLANS
 
 
 def raw_btn(text: str, callback: str, **kw) -> InlineKeyboardButton:
-    """Кнопка: кастомная иконка + текст БЕЗ эмодзи."""
+    """Inline-кнопка: custom icon + чистый текст без дублирующего обычного emoji."""
+    plain = strip_custom_emoji_tags(text)
+
     if settings.use_custom_emoji:
-        label, icon = button_parts(text, True)
+        label, icon = button_parts(plain, True)
         if icon:
             return InlineKeyboardButton(
-                text=label if label else " ",
+                text=label or " ",
                 callback_data=callback,
                 icon_custom_emoji_id=icon,
-                **kw
+                **kw,
             )
-    return InlineKeyboardButton(text=text, callback_data=callback, **kw)
+
+    return InlineKeyboardButton(text=plain, callback_data=callback, **kw)
 
 
 def _btn(t, key: str, callback: str, **kw) -> InlineKeyboardButton:
-    """Кнопка из локали: кастомная иконка + текст БЕЗ эмодзи."""
-    text = t(key)
-    if settings.use_custom_emoji:
-        label, icon = button_parts(text, True)
-        if icon:
-            return InlineKeyboardButton(
-                text=label if label else " ",
-                callback_data=callback,
-                icon_custom_emoji_id=icon,
-                **kw
-            )
-    return InlineKeyboardButton(text=text, callback_data=callback, **kw)
+    """Строит кнопку из локали; t() может уже содержать <tg-emoji>."""
+    return raw_btn(t(key), callback, **kw)
 
 
 LANG_BUTTONS = {
-    "fa": ("🇷 فارسی", "set_lang:fa"),
-    "en": ("🇬 English", "set_lang:en"),
+    "fa": ("🇮🇷 فارسی", "set_lang:fa"),
+    "en": ("🇬🇧 English", "set_lang:en"),
     "ru": ("🇷🇺 Русский", "set_lang:ru"),
 }
 
@@ -104,8 +97,8 @@ def dealer_menu_kb(t) -> InlineKeyboardMarkup:
 def dealer_confirm_kb(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅", callback_data=f"dealer_ok:{order_id}"),
-            InlineKeyboardButton(text="❌", callback_data=f"dealer_no:{order_id}"),
+            raw_btn("✅", f"dealer_ok:{order_id}"),
+            raw_btn("❌", f"dealer_no:{order_id}"),
         ],
     ])
 

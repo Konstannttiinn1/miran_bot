@@ -14,7 +14,7 @@ from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
 from app.services.xui_api import XuiClient
-from app.utils.menu import send_main_menu, send_with_logo
+from app.utils.emojis import apply_emoji, strip_custom_emoji_tags\nfrom app.utils.menu import send_main_menu, send_with_logo
 
 router = Router()
 router.message.middleware(I18nMiddleware())
@@ -91,7 +91,7 @@ async def set_lang(callback: types.CallbackQuery, t, lang, db_user):
     await db_repo.set_user_lang(callback.from_user.id, new_lang)
 
     nt = lambda key, **kw: get_text(new_lang, key, **kw)
-    await callback.answer(nt("lang_saved"))
+    await callback.answer(strip_custom_emoji_tags(nt("lang_saved")))
     try:
         await callback.message.edit_reply_markup(reply_markup=EMPTY_KB)
     except Exception:

@@ -8,7 +8,7 @@ from app.keyboards.builders import back_kb, dealer_menu_kb
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
-from app.utils.notifications import notify_admins
+from app.utils.emojis import strip_custom_emoji_tags\nfrom app.utils.notifications import notify_admins
 
 log = logging.getLogger(__name__)
 
@@ -53,12 +53,12 @@ async def dealer_approve(callback: types.CallbackQuery, t, lang, db_user):
     order = await db_repo.get_order(order_id)
 
     if order is None or order.status != "pending_dealer":
-        await callback.answer(t("dealer_already_processed"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_already_processed")), show_alert=True)
         return
 
     price = float(order.amount)
     if float(db_user.dealer_balance) < price:
-        await callback.answer(t("dealer_insufficient"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_insufficient")), show_alert=True)
         return
 
     await db_repo.change_dealer_balance(db_user.id, -price)
@@ -94,7 +94,7 @@ async def dealer_reject(callback: types.CallbackQuery, t, lang, db_user):
     order = await db_repo.get_order(order_id)
 
     if order is None or order.status != "pending_dealer":
-        await callback.answer(t("dealer_already_processed"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_already_processed")), show_alert=True)
         return
 
     await db_repo.update_order(order_id, status="failed")
