@@ -26,6 +26,14 @@ router.pre_checkout_query.middleware(I18nMiddleware())
 EMPTY_KB = InlineKeyboardMarkup(inline_keyboard=[])
 
 
+def _format_toman(amount: int | float, lang: str) -> str:
+    text = f"{int(amount):,}"
+    if lang == "fa":
+        text = text.translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")).replace(",", "،")
+        return f"{text} تومان"
+    return f"{text} Toman"
+
+
 def _stars_payload(order_id: int, user_id: int, plan: str) -> str:
     return f"stars:{order_id}:{user_id}:{plan}"
 
@@ -136,13 +144,20 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
         return
 
     if method == "dealer":
-        price_toman = PLANS[plan]["price_dealer_toman"]
-        order = await db_repo.create_order(db_user.id, plan, price_toman, "dealer_credit")
+        retail_toman = int(PLANS[plan]["price_toman"])
+        dealer_toman = int(PLANS[plan]["price_dealer_toman"])
+        # order.amount хранит именно внутреннее списание дилера (50%).
+        order = await db_repo.create_order(db_user.id, plan, dealer_toman, "dealer_credit")
         await state.update_data(plan=plan, order_id=order.id)
         await state.set_state(Purchase.waiting_receipt)
         await send_with_logo(
             callback,
-            t("dealer_pay_instructions", card=settings.dealer_card_number, order_id=order.id)
+            t(
+                "dealer_pay_instructions",
+                amount=_format_toman(retail_toman, lang),
+                card=settings.dealer_card_number,
+                order_id=order.id,
+            ),
         )
         return
 
@@ -272,7 +287,8 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
     dealers = await db_repo.list_dealers()
     for d in dealers:
         try:
-            dealer_price = PLANS[plan]["price_dealer_toman"]
+            client_price = int(PLANS[plan]["price_toman"])
+            dealer_price = int(PLANS[plan]["price_dealer_toman"])
             await bot.send_photo(
                 d.telegram_id,
                 photo,
@@ -282,7 +298,8 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
                     order_id=order_id,
                     username=db_user.username or db_user.telegram_id,
                     plan=plan,
-                    amount=dealer_price,
+                    client_amount=_format_toman(client_price, d.lang),
+                    dealer_amount=_format_toman(dealer_price, d.lang),
                 ),
                 reply_markup=dealer_confirm_kb(order_id),
             )
