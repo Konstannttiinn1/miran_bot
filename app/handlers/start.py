@@ -150,7 +150,11 @@ async def set_lang(callback: types.CallbackQuery, t, lang, db_user):
 @router.callback_query(F.data == "menu:lang")
 async def change_lang(callback: types.CallbackQuery, t, lang, db_user):
     await callback.answer()
-    await send_with_logo(callback, t("start_msg"), reply_markup=language_kb())
+    await send_with_logo(
+        callback,
+        t("start_msg"),
+        reply_markup=language_kb(t, with_back=True),
+    )
 
 
 @router.callback_query(F.data == "back:main")
