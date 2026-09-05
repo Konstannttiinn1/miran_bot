@@ -8,8 +8,8 @@ from aiogram.types import InlineKeyboardMarkup
 from app.config import settings
 from app.database.models import utcnow
 from app.handlers.states import Purchase
-from app.keyboards.builders import (admin_menu_kb, dealer_menu_kb, language_kb,
-                                    plans_kb, sub_link_kb)
+from app.keyboards.builders import (admin_menu_kb, back_kb, dealer_menu_kb,
+                                    language_kb, plans_kb, sub_link_kb)
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
@@ -38,7 +38,7 @@ async def cmd_start(message: types.Message, t, lang, db_user):
         return
 
     if not db_user.lang_selected:
-        await message.answer(t("start_msg"), reply_markup=language_kb())
+        await send_with_logo(message, t("start_msg"), reply_markup=language_kb())
         return
 
     await send_main_menu(message, t)
@@ -141,31 +141,23 @@ async def set_lang(callback: types.CallbackQuery, t, lang, db_user):
 
     nt = lambda key, **kw: get_text(new_lang, key, **kw)
     await callback.answer(strip_custom_emoji_tags(nt("lang_saved")))
-    try:
-        await callback.message.edit_reply_markup(reply_markup=EMPTY_KB)
-    except Exception:
-        pass
     if db_user.role == "dealer":
         await send_with_logo(callback, nt("dealer_menu_text"), reply_markup=dealer_menu_kb(nt))
     else:
-        await send_main_menu(callback.message, nt)
+        await send_main_menu(callback, nt)
 
 
 @router.callback_query(F.data == "menu:lang")
 async def change_lang(callback: types.CallbackQuery, t, lang, db_user):
     await callback.answer()
-    await callback.message.answer(t("start_msg"), reply_markup=language_kb())
+    await send_with_logo(callback, t("start_msg"), reply_markup=language_kb())
 
 
 @router.callback_query(F.data == "back:main")
 async def back_main(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     await state.clear()
     await callback.answer()
-    try:
-        await callback.message.edit_reply_markup(reply_markup=EMPTY_KB)
-    except Exception:
-        pass
-    await send_main_menu(callback.message, t)
+    await send_main_menu(callback, t)
 
 
 @router.callback_query(F.data == "menu:my_vpn")
@@ -175,17 +167,19 @@ async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMCont
     now = utcnow()
 
     if sub is None or sub.expire_at <= now:
-        if sub is not None:
-            await send_with_logo(
-                callback,
-                t("subscription_expired", expire_date=sub.expire_at.strftime("%d.%m.%Y"))
-            )
         used_test = await db_repo.user_has_order(db_user.id, "test")
         await state.set_state(Purchase.choosing_plan)
+        screen_text = t("select_plan")
+        if sub is not None:
+            screen_text = (
+                t("subscription_expired", expire_date=sub.expire_at.strftime("%d.%m.%Y"))
+                + "\n\n"
+                + t("select_plan")
+            )
         await send_with_logo(
             callback,
-            t("select_plan"),
-            reply_markup=plans_kb(t, with_test=not used_test, lang=lang)
+            screen_text,
+            reply_markup=plans_kb(t, with_test=not used_test, lang=lang),
         )
         return
 
@@ -220,12 +214,24 @@ async def get_link(callback: types.CallbackQuery, t, lang, db_user):
     sub_id = (client or {}).get("subId")
     if sub_id:
         link = f"{settings.xui_sub_url.rstrip('/')}/{sub_id}"
-        await send_with_logo(callback, t("connection_link", link=h(link)))
+        await send_with_logo(
+            callback,
+            t("connection_link", link=h(link)),
+            reply_markup=back_kb(t, "back:main"),
+        )
     else:
-        await send_with_logo(callback, t("support_msg", support=settings.support_username))
+        await send_with_logo(
+            callback,
+            t("support_msg", support=settings.support_username),
+            reply_markup=back_kb(t, "back:main"),
+        )
 
 
 @router.callback_query(F.data == "menu:support")
 async def support(callback: types.CallbackQuery, t, lang, db_user):
     await callback.answer()
-    await send_with_logo(callback, t("support_msg", support=settings.support_username))
+    await send_with_logo(
+        callback,
+        t("support_msg", support=settings.support_username),
+        reply_markup=back_kb(t, "back:main"),
+    )

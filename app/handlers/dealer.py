@@ -9,6 +9,7 @@ from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
 from app.utils.emojis import strip_custom_emoji_tags
+from app.utils.menu import send_with_logo
 from app.utils.notifications import notify_admins
 
 log = logging.getLogger(__name__)
@@ -33,7 +34,11 @@ async def back_dealer(callback: types.CallbackQuery, t, lang, db_user):
     if not await _dealer_only(callback, db_user):
         return
     await callback.answer()
-    await callback.message.edit_text(t("dealer_menu_text"), reply_markup=dealer_menu_kb(t))
+    await send_with_logo(
+        callback,
+        t("dealer_menu_text"),
+        reply_markup=dealer_menu_kb(t),
+    )
 
 
 @router.callback_query(F.data == "dealer:balance")
@@ -41,7 +46,8 @@ async def dealer_balance(callback: types.CallbackQuery, t, lang, db_user):
     if not await _dealer_only(callback, db_user):
         return
     await callback.answer()
-    await callback.message.answer(
+    await send_with_logo(
+        callback,
         t("dealer_balance_msg", balance=_balance_text(db_user.dealer_balance)),
         reply_markup=back_kb(t, "back:dealer"),
     )
@@ -54,7 +60,8 @@ async def dealer_history(callback: types.CallbackQuery, t, lang, db_user):
     logs = await db_repo.list_dealer_logs(db_user.id)
     await callback.answer()
     if not logs:
-        await callback.message.answer(
+        await send_with_logo(
+            callback,
             t("dealer_history_msg", logs="—"),
             reply_markup=back_kb(t, "back:dealer"),
         )
@@ -64,7 +71,8 @@ async def dealer_history(callback: types.CallbackQuery, t, lang, db_user):
         + (f" — #{lg.order_id}" if lg.order_id else "")
         for lg in logs
     ]
-    await callback.message.answer(
+    await send_with_logo(
+        callback,
         t("dealer_history_msg", logs="\n".join(lines)),
         reply_markup=back_kb(t, "back:dealer"),
     )

@@ -8,7 +8,7 @@ from aiogram.types import InlineKeyboardMarkup, LabeledPrice
 from app.bot import bot
 from app.config import settings
 from app.handlers.states import Purchase
-from app.keyboards.builders import dealer_confirm_kb, payment_kb
+from app.keyboards.builders import back_kb, dealer_confirm_kb, payment_kb
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services import heleket
@@ -167,6 +167,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
                 card=settings.dealer_card_number,
                 order_id=order.id,
             ),
+            reply_markup=back_kb(t, "back:main"),
         )
         return
 
@@ -174,7 +175,11 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
 
     if method == "heleket":
         if not settings.heleket_enabled or not heleket.is_configured():
-            await send_with_logo(callback, t("pay_temporarily_disabled"))
+            await send_with_logo(
+                callback,
+                t("pay_temporarily_disabled"),
+                reply_markup=payment_kb(t),
+            )
             return
         price_usd = PLANS[plan]["price_usd"]
         order = await db_repo.create_order(db_user.id, plan, price_usd, "usdt")
@@ -189,11 +194,15 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
         await send_with_logo(
             callback,
             t("invoice_created", order_id=order.id, url=invoice["url"]),
-            disable_web_page_preview=True,
+            reply_markup=back_kb(t, "back:main"),
         )
         return
 
-    await send_with_logo(callback, t("payment_placeholder") + f"\n\n{plan} ➜ {method}")
+    await send_with_logo(
+        callback,
+        t("payment_placeholder") + f"\n\n{plan} ➜ {method}",
+        reply_markup=payment_kb(t),
+    )
 
 
 @router.pre_checkout_query()
@@ -332,8 +341,4 @@ async def receipt_wrong_type(message: types.Message, t, lang, db_user):
 async def cancel_purchase(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     await state.clear()
     await callback.answer()
-    try:
-        await callback.message.edit_reply_markup(reply_markup=EMPTY_KB)
-    except Exception:
-        pass
-    await send_main_menu(callback.message, t)
+    await send_main_menu(callback, t)
