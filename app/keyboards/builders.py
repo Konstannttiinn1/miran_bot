@@ -39,12 +39,14 @@ LANG_BUTTONS = {
 }
 
 
-def language_kb() -> InlineKeyboardMarkup:
+def language_kb(t=None, with_back: bool = False) -> InlineKeyboardMarkup:
     rows = []
     for code in settings.langs_list:
         if code in LANG_BUTTONS:
             text, data = LANG_BUTTONS[code]
             rows.append([InlineKeyboardButton(text=text, callback_data=data)])
+    if with_back and t is not None:
+        rows.append([_btn(t, "btn_back", "back:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
