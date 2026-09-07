@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="app/static/logo.jpg" alt="IR2_VPN" width="520">
+<img src="app/static/logo.jpg" alt="ORION_VPN" width="520">
 
-# IR2_VPN — Telegram VPN Sales Bot
+# ORION_VPN — Telegram VPN Sales Bot
 
 ### Готовая основа Telegram-бота для продажи VPN через 3x-UI
 
@@ -18,7 +18,7 @@
 
 ## Что это за проект
 
-**IR2_VPN** — Telegram-бот для автоматизации продажи VPN-подписок.
+**ORION_VPN** — Telegram-бот для автоматизации продажи VPN-подписок.
 
 Он закрывает основной путь клиента прямо внутри Telegram:
 

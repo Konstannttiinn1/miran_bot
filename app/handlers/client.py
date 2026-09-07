@@ -68,18 +68,18 @@ def _payment_error(lang: str, activation: bool = False) -> str:
 def _invoice_copy(lang: str, traffic: int, stars: int) -> tuple[str, str, str]:
     if lang == "fa":
         return (
-            f"IR2_VPN · {traffic} GB",
+            f"ORION_VPN · {traffic} GB",
             f"اشتراک ۳۰ روزه VPN با {traffic} گیگابایت ترافیک",
             f"{traffic} GB · {stars} Stars",
         )
     if lang == "ru":
         return (
-            f"IR2_VPN · {traffic} ГБ",
+            f"ORION_VPN · {traffic} ГБ",
             f"VPN на 30 дней, пакет {traffic} ГБ",
             f"{traffic} ГБ · {stars} Stars",
         )
     return (
-        f"IR2_VPN · {traffic} GB",
+        f"ORION_VPN · {traffic} GB",
         f"30-day VPN plan with {traffic} GB of traffic",
         f"{traffic} GB · {stars} Stars",
     )

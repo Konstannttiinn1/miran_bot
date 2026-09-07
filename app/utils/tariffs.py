@@ -1,4 +1,4 @@
-"""Единый справочник тарифов IR2_VPN."""
+"""Единый справочник тарифов ORION_VPN."""
 
 from math import ceil, floor
 
