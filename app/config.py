@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     # Telegram
     bot_token: str = ""
     admin_ids: str = ""
-    support_username: str = "@support"
+    support_username: str = "@Orion_Ehsan"
 
     # База данных
     db_url: str = "sqlite+aiosqlite:///vpn.db"
