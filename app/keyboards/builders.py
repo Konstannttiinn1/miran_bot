@@ -140,13 +140,21 @@ def dealer_buy_confirm_kb(plan: str) -> InlineKeyboardMarkup:
     ])
 
 
+def _dealer_button_name(name: str, limit: int = 28) -> str:
+    clean = " ".join(str(name).split())
+    return clean if len(clean) <= limit else clean[: limit - 1] + "…"
+
+
 def dealer_subscriptions_kb(
     items: list[tuple[int, str, str]],
     page: int,
     total_pages: int,
 ) -> InlineKeyboardMarkup:
     rows = [
-        [raw_btn(f"{status} #{sub_id} · {name}", f"dealer:sub:{sub_id}:{page}")]
+        [raw_btn(
+            f"{status} #{sub_id} · {_dealer_button_name(name)}",
+            f"dealer:sub:{sub_id}:{page}",
+        )]
         for sub_id, name, status in items
     ]
     nav = []
@@ -167,7 +175,7 @@ def dealer_subscription_card_kb(
     link: str | None,
 ) -> InlineKeyboardMarkup:
     rows = []
-    if link:
+    if link and len(link) <= 256:
         rows.append([
             InlineKeyboardButton(
                 text="📋 کپی لینک",
@@ -206,20 +214,24 @@ def dealer_renew_confirm_kb(sub_id: int, plan: str, page: int) -> InlineKeyboard
 
 
 def dealer_created_name_kb(sub_id: int, link: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
+    rows = []
+    if len(link) <= 256:
+        rows.append([
             InlineKeyboardButton(
                 text="📋 کپی لینک",
                 copy_text=CopyTextButton(text=link),
             )
-        ],
-        [raw_btn("⏭ بعداً نام‌گذاری می‌کنم", f"dealer:name_skip:{sub_id}")],
-    ])
+        ])
+    rows.append([raw_btn("⏭ بعداً نام‌گذاری می‌کنم", f"dealer:name_skip:{sub_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def dealer_search_results_kb(items: list[tuple[int, str, str]]) -> InlineKeyboardMarkup:
     rows = [
-        [raw_btn(f"{status} #{sub_id} · {name}", f"dealer:sub:{sub_id}:0")]
+        [raw_btn(
+            f"{status} #{sub_id} · {_dealer_button_name(name)}",
+            f"dealer:sub:{sub_id}:0",
+        )]
         for sub_id, name, status in items
     ]
     rows.append([raw_btn("🔙 بازگشت", "dealer:subs")])
