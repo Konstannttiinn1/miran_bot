@@ -4,6 +4,7 @@ from html import escape as h
 from aiogram import F, Router, types
 
 from app.bot import bot
+from app.config import settings
 from app.keyboards.builders import back_kb, dealer_menu_kb
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
