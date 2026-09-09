@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     dealer_card_number: str = "0000-0000-0000-0000"
     dealer_contact: str = "@dealer"
 
+    # Тестовые ссылки, которые дилер может выдавать потенциальным клиентам
+    dealer_test_days: int = 10
+    dealer_test_traffic_gb: int = 5
+    dealer_test_daily_limit: int = 10
+    dealer_test_timezone: str = "Asia/Tehran"
+
     # Языки и оформление
     available_langs: str = "fa,en,ru"
     use_custom_emoji: bool = False

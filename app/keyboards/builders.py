@@ -99,6 +99,7 @@ def back_kb(t, callback_data: str) -> InlineKeyboardMarkup:
 
 def dealer_menu_kb(t) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [raw_btn("🎁 دریافت لینک تست", "dealer:test_link")],
         [_btn(t, "btn_dealer_balance", "dealer:balance")],
         [_btn(t, "btn_dealer_history", "dealer:history")],
         [_btn(t, "btn_lang", "menu:lang")],

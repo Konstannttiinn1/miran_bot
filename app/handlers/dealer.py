@@ -8,6 +8,7 @@ from app.keyboards.builders import back_kb, dealer_menu_kb
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
+from app.services.xui_api import XuiClient
 from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_with_logo
 from app.utils.notifications import notify_admins
@@ -77,6 +78,69 @@ async def dealer_history(callback: types.CallbackQuery, t, lang, db_user):
         reply_markup=back_kb(t, "back:dealer"),
     )
 
+
+
+
+@router.callback_query(F.data == "dealer:test_link")
+async def dealer_test_link(callback: types.CallbackQuery, t, lang, db_user):
+    """Выдаёт дилеру отдельную тестовую подписку: 10 дней / 5 ГБ по умолчанию."""
+    if not await _dealer_only(callback, db_user):
+        return
+
+    status, slot_id, used = await db_repo.reserve_dealer_test_slot(
+        dealer_id=db_user.id,
+        daily_limit=settings.dealer_test_daily_limit,
+        tz_name=settings.dealer_test_timezone,
+        days=settings.dealer_test_days,
+        traffic_gb=settings.dealer_test_traffic_gb,
+    )
+
+    if status == "limit":
+        await callback.answer(
+            f"❌ سقف روزانه {settings.dealer_test_daily_limit} لینک تست تکمیل شده است.",
+            show_alert=True,
+        )
+        return
+    if status != "reserved" or slot_id is None:
+        await callback.answer("❌ دسترسی مجاز نیست.", show_alert=True)
+        return
+
+    await callback.answer("⏳")
+
+    try:
+        xui_email, link = await XuiClient().create_test_client(
+            dealer_id=db_user.id,
+            days=settings.dealer_test_days,
+            traffic_gb=settings.dealer_test_traffic_gb,
+        )
+    except Exception as exc:
+        await db_repo.fail_dealer_test_slot(slot_id, str(exc))
+        log.exception("Dealer test link creation failed for dealer %s", db_user.telegram_id)
+        await callback.message.answer(
+            "❌ ساخت لینک تست ناموفق بود. لطفاً کمی بعد دوباره تلاش کنید."
+        )
+        await notify_admins(
+            f"🚨 Не удалось создать дилерскую тест-ссылку для "
+            f"{db_user.username or db_user.telegram_id}: {type(exc).__name__}"
+        )
+        return
+
+    await db_repo.complete_dealer_test_slot(slot_id, xui_email)
+    remaining = max(0, settings.dealer_test_daily_limit - used)
+
+    await callback.message.answer(
+        "🎁 <b>لینک تست آماده است</b>\n\n"
+        f"⏳ مدت: {settings.dealer_test_days} روز\n"
+        f"📊 حجم: {settings.dealer_test_traffic_gb} گیگابایت\n\n"
+        f"🔗 <code>{h(link)}</code>\n\n"
+        f"📌 باقی‌مانده امروز: {remaining} از {settings.dealer_test_daily_limit}"
+    )
+    log.info(
+        "Dealer %s issued test link; used=%s/%s",
+        db_user.telegram_id,
+        used,
+        settings.dealer_test_daily_limit,
+    )
 
 @router.callback_query(F.data.startswith("dealer_ok:"))
 async def dealer_approve(callback: types.CallbackQuery, t, lang, db_user):

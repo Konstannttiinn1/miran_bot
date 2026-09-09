@@ -77,6 +77,39 @@ class XuiClient:
         log.info("3x-UI: клиент %s создан", email)
         return sub_id
 
+
+    async def create_test_client(
+        self,
+        dealer_id: int,
+        days: int = 10,
+        traffic_gb: int = 5,
+    ) -> tuple[str, str]:
+        """Создаёт отдельного временного клиента для дилерской тест-ссылки."""
+        if days <= 0 or traffic_gb <= 0:
+            raise ValueError("test days and traffic_gb must be positive")
+        if not settings.xui_sub_url.strip():
+            raise XuiApiError("XUI_SUB_URL is not configured")
+
+        email = (
+            f"dtest-{dealer_id}-{int(time.time())}-"
+            f"{uuid_lib.uuid4().hex[:8]}"
+        )
+        sub_id = await self.add_client(
+            email=email,
+            days=days,
+            limit_ip=1,
+            traffic_gb=traffic_gb,
+        )
+        link = f"{settings.xui_sub_url.rstrip('/')}/{sub_id}"
+        log.info(
+            "3x-UI: dealer test client created: dealer=%s email=%s days=%s traffic=%sGB",
+            dealer_id,
+            email,
+            days,
+            traffic_gb,
+        )
+        return email, link
+
     async def get_client(self, email: str) -> dict | None:
         http = await self._client()
         r = await http.get(f"{self.base}/panel/api/clients/get/{email}")

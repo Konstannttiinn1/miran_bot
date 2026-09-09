@@ -1,3 +1,6 @@
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 from sqlalchemy import func, select
 
 from app.database.engine import async_session_factory
@@ -219,6 +222,104 @@ async def reject_dealer_order(order_id: int, dealer_id: int) -> Order | None:
             await session.flush()
             return order
 
+
+
+
+async def reserve_dealer_test_slot(
+    dealer_id: int,
+    daily_limit: int,
+    tz_name: str,
+    days: int,
+    traffic_gb: int,
+) -> tuple[str, int | None, int]:
+    """Атомарно резервирует один дневной слот на выдачу тестовой ссылки.
+
+    Возвращает (status, log_id, used_after_reservation).
+    В лимит входят уже выданные ссылки и незавершённые резервы.
+    """
+    if daily_limit <= 0:
+        return "limit", None, 0
+
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone.utc
+
+    now_utc = datetime.now(timezone.utc)
+    local_now = now_utc.astimezone(tz)
+    local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    local_end = local_start + timedelta(days=1)
+    start_utc = local_start.astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = local_end.astimezone(timezone.utc).replace(tzinfo=None)
+
+    async with async_session_factory() as session:
+        async with session.begin():
+            dealer = (
+                await session.execute(
+                    select(User).where(User.id == dealer_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if dealer is None or dealer.role != "dealer":
+                return "not_dealer", None, 0
+
+            used = (
+                await session.execute(
+                    select(func.count(DealerLog.id)).where(
+                        DealerLog.dealer_id == dealer_id,
+                        DealerLog.action.in_(["test_link_reserved", "test_link_issued"]),
+                        DealerLog.created_at >= start_utc,
+                        DealerLog.created_at < end_utc,
+                    )
+                )
+            ).scalar_one()
+
+            if int(used) >= daily_limit:
+                return "limit", None, int(used)
+
+            entry = DealerLog(
+                dealer_id=dealer_id,
+                action="test_link_reserved",
+                details={"days": days, "traffic_gb": traffic_gb},
+            )
+            session.add(entry)
+            await session.flush()
+            return "reserved", entry.id, int(used) + 1
+
+
+async def complete_dealer_test_slot(log_id: int, xui_email: str) -> bool:
+    """Помечает зарезервированный слот успешно выданным, не сохраняя subId."""
+    async with async_session_factory() as session:
+        async with session.begin():
+            entry = (
+                await session.execute(
+                    select(DealerLog).where(DealerLog.id == log_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if entry is None or entry.action != "test_link_reserved":
+                return False
+            details = dict(entry.details or {})
+            details["xui_email"] = xui_email
+            entry.details = details
+            entry.action = "test_link_issued"
+            return True
+
+
+async def fail_dealer_test_slot(log_id: int, error: str) -> bool:
+    """Освобождает дневной лимит после ошибки 3x-UI, сохраняя запись для аудита."""
+    async with async_session_factory() as session:
+        async with session.begin():
+            entry = (
+                await session.execute(
+                    select(DealerLog).where(DealerLog.id == log_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if entry is None or entry.action != "test_link_reserved":
+                return False
+            details = dict(entry.details or {})
+            details["error"] = str(error)[:200]
+            entry.details = details
+            entry.action = "test_link_failed"
+            return True
 
 async def create_dealer_log(dealer_id: int, action: str, order_id: int | None = None, details: dict | None = None) -> None:
     async with async_session_factory() as session:
