@@ -108,7 +108,6 @@ def dealer_menu_kb(t) -> InlineKeyboardMarkup:
     ])
 
 
-
 def _dealer_price(plan: str) -> float:
     return get_dealer_debit_usd(
         plan,
@@ -222,7 +221,6 @@ def dealer_created_name_kb(sub_id: int, link: str) -> InlineKeyboardMarkup:
                 copy_text=CopyTextButton(text=link),
             )
         ])
-    rows.append([raw_btn("⏭ بعداً نام‌گذاری می‌کنم", f"dealer:name_skip:{sub_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
