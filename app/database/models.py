@@ -39,6 +39,24 @@ class Subscription(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class DealerSubscription(Base):
+    """Отдельная VPN-подписка, купленная дилером для своего клиента."""
+
+    __tablename__ = "dealer_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dealer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    client_name: Mapped[str] = mapped_column(String, default="")
+    xui_email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    plan: Mapped[str] = mapped_column(String)
+    expire_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    traffic_limit_gb: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String, default="pending")
+    price_paid_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
 class Order(Base):
     __tablename__ = "orders"
 

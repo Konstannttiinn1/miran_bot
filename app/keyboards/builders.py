@@ -1,8 +1,8 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import settings
 from app.utils.emojis import button_parts, strip_custom_emoji_tags
-from app.utils.tariffs import PLANS, get_plan_button_text
+from app.utils.tariffs import PLANS, get_dealer_debit_usd, get_plan_button_text
 
 
 def raw_btn(text: str, callback: str, **kw) -> InlineKeyboardButton:
@@ -100,10 +100,130 @@ def back_kb(t, callback_data: str) -> InlineKeyboardMarkup:
 def dealer_menu_kb(t) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [raw_btn("🎁 دریافت لینک تست", "dealer:test_link")],
+        [raw_btn("🛒 خرید اشتراک", "dealer:buy_sub")],
+        [raw_btn("📂 اشتراک‌های من", "dealer:subs")],
         [_btn(t, "btn_dealer_balance", "dealer:balance")],
         [_btn(t, "btn_dealer_history", "dealer:history")],
         [_btn(t, "btn_lang", "menu:lang")],
     ])
+
+
+
+def _dealer_price(plan: str) -> float:
+    return get_dealer_debit_usd(
+        plan,
+        settings.toman_per_usd,
+        settings.dealer_discount,
+    )
+
+
+def dealer_buy_plans_kb() -> InlineKeyboardMarkup:
+    rows = []
+    for key, plan in PLANS.items():
+        if key == "test":
+            continue
+        traffic = int(plan["traffic_gb"])
+        rows.append([
+            raw_btn(
+                f"🛒 {traffic} گیگ — ${_dealer_price(key):.3f}",
+                f"dealer:buyplan:{key}",
+            )
+        ])
+    rows.append([raw_btn("🔙 بازگشت", "back:dealer")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def dealer_buy_confirm_kb(plan: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [raw_btn("✅ تأیید خرید", f"dealer:buyconfirm:{plan}")],
+        [raw_btn("🔙 بازگشت", "dealer:buy_sub")],
+    ])
+
+
+def dealer_subscriptions_kb(
+    items: list[tuple[int, str, str]],
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    rows = [
+        [raw_btn(f"{status} #{sub_id} · {name}", f"dealer:sub:{sub_id}:{page}")]
+        for sub_id, name, status in items
+    ]
+    nav = []
+    if page > 0:
+        nav.append(raw_btn("⬅️", f"dealer:subs:{page - 1}"))
+    if page + 1 < total_pages:
+        nav.append(raw_btn("➡️", f"dealer:subs:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([raw_btn("🔎 جستجو", "dealer:search")])
+    rows.append([raw_btn("🔙 بازگشت", "back:dealer")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def dealer_subscription_card_kb(
+    sub_id: int,
+    page: int,
+    link: str | None,
+) -> InlineKeyboardMarkup:
+    rows = []
+    if link:
+        rows.append([
+            InlineKeyboardButton(
+                text="📋 کپی لینک",
+                copy_text=CopyTextButton(text=link),
+            )
+        ])
+    rows.extend([
+        [raw_btn("🛒 تمدید اشتراک", f"dealer:renew:{sub_id}:{page}")],
+        [raw_btn("✏️ تغییر نام", f"dealer:rename:{sub_id}:{page}")],
+        [raw_btn("🔙 بازگشت", f"dealer:subs:{page}")],
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def dealer_renew_plans_kb(sub_id: int, page: int) -> InlineKeyboardMarkup:
+    rows = []
+    for key, plan in PLANS.items():
+        if key == "test":
+            continue
+        traffic = int(plan["traffic_gb"])
+        rows.append([
+            raw_btn(
+                f"🕒 {traffic} گیگ — ${_dealer_price(key):.3f}",
+                f"dealer:renewplan:{sub_id}:{key}:{page}",
+            )
+        ])
+    rows.append([raw_btn("🔙 بازگشت", f"dealer:sub:{sub_id}:{page}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def dealer_renew_confirm_kb(sub_id: int, plan: str, page: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [raw_btn("✅ تأیید تمدید", f"dealer:renewconfirm:{sub_id}:{plan}:{page}")],
+        [raw_btn("🔙 بازگشت", f"dealer:renew:{sub_id}:{page}")],
+    ])
+
+
+def dealer_created_name_kb(sub_id: int, link: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="📋 کپی لینک",
+                copy_text=CopyTextButton(text=link),
+            )
+        ],
+        [raw_btn("⏭ بعداً نام‌گذاری می‌کنم", f"dealer:name_skip:{sub_id}")],
+    ])
+
+
+def dealer_search_results_kb(items: list[tuple[int, str, str]]) -> InlineKeyboardMarkup:
+    rows = [
+        [raw_btn(f"{status} #{sub_id} · {name}", f"dealer:sub:{sub_id}:0")]
+        for sub_id, name, status in items
+    ]
+    rows.append([raw_btn("🔙 بازگشت", "dealer:subs")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def dealer_confirm_kb(order_id: int) -> InlineKeyboardMarkup:

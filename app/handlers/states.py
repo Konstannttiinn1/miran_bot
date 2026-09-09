@@ -19,3 +19,9 @@ class TrafficTopup(StatesGroup):
     choosing_package = State()
     choosing_payment = State()
     waiting_receipt = State()
+
+
+class DealerManagedSubscription(StatesGroup):
+    """Покупка, именование и поиск подписок, которыми управляет дилер."""
+    waiting_name = State()
+    searching = State()

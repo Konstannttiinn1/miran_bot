@@ -1,10 +1,11 @@
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 
 from app.database.engine import async_session_factory
-from app.database.models import DealerLog, Order, Subscription, User
+from app.database.models import DealerLog, DealerSubscription, Order, Subscription, User
 
 
 async def get_or_create_user(telegram_id: int, username: str | None = None) -> User:
@@ -84,6 +85,7 @@ async def delete_user_full(telegram_id: int) -> None:
         uid = user.id
         for model, column in ((Subscription, Subscription.user_id),
                               (Order, Order.user_id),
+                              (DealerSubscription, DealerSubscription.dealer_id),
                               (DealerLog, DealerLog.dealer_id)):
             rows = await session.execute(select(model).where(column == uid))
             for row in rows.scalars().all():
@@ -320,6 +322,360 @@ async def fail_dealer_test_slot(log_id: int, error: str) -> bool:
             entry.details = details
             entry.action = "test_link_failed"
             return True
+
+
+async def reserve_dealer_subscription_purchase(
+    dealer_id: int,
+    plan: str,
+    amount: float,
+) -> tuple[str, DealerSubscription | None]:
+    """Списывает дилерскую цену и создаёт pending-запись отдельной подписки."""
+    if amount <= 0:
+        return "invalid", None
+
+    async with async_session_factory() as session:
+        async with session.begin():
+            dealer = (
+                await session.execute(
+                    select(User).where(User.id == dealer_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if dealer is None or dealer.role != "dealer":
+                return "not_dealer", None
+            if float(dealer.dealer_balance) < amount:
+                return "insufficient", None
+
+            dealer.dealer_balance = float(dealer.dealer_balance) - amount
+            sub = DealerSubscription(
+                dealer_id=dealer_id,
+                client_name="",
+                xui_email=f"dsub-{dealer_id}-{uuid4().hex[:12]}",
+                plan=plan,
+                traffic_limit_gb=0,
+                status="pending",
+                price_paid_usd=amount,
+            )
+            session.add(sub)
+            await session.flush()
+            sub.client_name = f"اشتراک #{sub.id}"
+            await session.flush()
+            return "reserved", sub
+
+
+async def complete_dealer_subscription_purchase(
+    sub_id: int,
+    dealer_id: int,
+    expire_at: datetime,
+    traffic_gb: int,
+) -> DealerSubscription | None:
+    async with async_session_factory() as session:
+        async with session.begin():
+            sub = (
+                await session.execute(
+                    select(DealerSubscription)
+                    .where(
+                        DealerSubscription.id == sub_id,
+                        DealerSubscription.dealer_id == dealer_id,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if sub is None or sub.status != "pending":
+                return None
+            sub.expire_at = expire_at
+            sub.traffic_limit_gb = traffic_gb
+            sub.status = "active"
+            session.add(
+                DealerLog(
+                    dealer_id=dealer_id,
+                    action="dealer_sub_purchase",
+                    details={
+                        "managed_subscription_id": sub.id,
+                        "plan": sub.plan,
+                        "amount_usd": float(sub.price_paid_usd),
+                    },
+                )
+            )
+            await session.flush()
+            return sub
+
+
+async def rollback_dealer_subscription_purchase(
+    sub_id: int,
+    dealer_id: int,
+    error: str,
+) -> bool:
+    async with async_session_factory() as session:
+        async with session.begin():
+            sub = (
+                await session.execute(
+                    select(DealerSubscription)
+                    .where(
+                        DealerSubscription.id == sub_id,
+                        DealerSubscription.dealer_id == dealer_id,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if sub is None or sub.status != "pending":
+                return False
+            dealer = (
+                await session.execute(
+                    select(User).where(User.id == dealer_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if dealer is not None:
+                dealer.dealer_balance = (
+                    float(dealer.dealer_balance) + float(sub.price_paid_usd)
+                )
+            sub.status = "failed"
+            session.add(
+                DealerLog(
+                    dealer_id=dealer_id,
+                    action="dealer_sub_purchase_rollback",
+                    details={
+                        "managed_subscription_id": sub.id,
+                        "amount_usd": float(sub.price_paid_usd),
+                        "error": str(error)[:200],
+                    },
+                )
+            )
+            return True
+
+
+async def list_dealer_subscriptions(
+    dealer_id: int,
+    page: int = 0,
+    per_page: int = 5,
+) -> tuple[list[DealerSubscription], int]:
+    page = max(0, page)
+    async with async_session_factory() as session:
+        where = (
+            DealerSubscription.dealer_id == dealer_id,
+            DealerSubscription.status != "failed",
+        )
+        total = (
+            await session.execute(
+                select(func.count(DealerSubscription.id)).where(*where)
+            )
+        ).scalar_one()
+        result = await session.execute(
+            select(DealerSubscription)
+            .where(*where)
+            .order_by(DealerSubscription.id.desc())
+            .limit(per_page)
+            .offset(page * per_page)
+        )
+        return list(result.scalars().all()), int(total)
+
+
+async def get_dealer_subscription(
+    dealer_id: int,
+    sub_id: int,
+) -> DealerSubscription | None:
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(DealerSubscription).where(
+                DealerSubscription.id == sub_id,
+                DealerSubscription.dealer_id == dealer_id,
+                DealerSubscription.status != "failed",
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+async def rename_dealer_subscription(
+    dealer_id: int,
+    sub_id: int,
+    client_name: str,
+) -> bool:
+    clean = " ".join(client_name.split()).strip()
+    if not clean:
+        return False
+    async with async_session_factory() as session:
+        async with session.begin():
+            sub = (
+                await session.execute(
+                    select(DealerSubscription)
+                    .where(
+                        DealerSubscription.id == sub_id,
+                        DealerSubscription.dealer_id == dealer_id,
+                        DealerSubscription.status != "failed",
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if sub is None:
+                return False
+            sub.client_name = clean[:64]
+            return True
+
+
+async def search_dealer_subscriptions(
+    dealer_id: int,
+    query: str,
+    limit: int = 10,
+) -> list[DealerSubscription]:
+    clean = query.strip().lstrip("#")
+    async with async_session_factory() as session:
+        base = [
+            DealerSubscription.dealer_id == dealer_id,
+            DealerSubscription.status != "failed",
+        ]
+        if clean.isdigit():
+            stmt = select(DealerSubscription).where(
+                *base,
+                DealerSubscription.id == int(clean),
+            )
+        else:
+            stmt = select(DealerSubscription).where(
+                *base,
+                DealerSubscription.client_name.ilike(f"%{clean}%"),
+            )
+        result = await session.execute(
+            stmt.order_by(DealerSubscription.id.desc()).limit(limit)
+        )
+        return list(result.scalars().all())
+
+
+async def reserve_dealer_subscription_renewal(
+    dealer_id: int,
+    sub_id: int,
+    plan: str,
+    amount: float,
+) -> tuple[str, DealerSubscription | None, int | None]:
+    """Атомарно резервирует деньги на продление конкретной подписки."""
+    if amount <= 0:
+        return "invalid", None, None
+    async with async_session_factory() as session:
+        async with session.begin():
+            sub = (
+                await session.execute(
+                    select(DealerSubscription)
+                    .where(
+                        DealerSubscription.id == sub_id,
+                        DealerSubscription.dealer_id == dealer_id,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if sub is None or sub.status == "failed":
+                return "not_found", None, None
+            if sub.status in {"pending", "renew_processing"}:
+                return "processing", sub, None
+
+            dealer = (
+                await session.execute(
+                    select(User).where(User.id == dealer_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if dealer is None or dealer.role != "dealer":
+                return "not_dealer", sub, None
+            if float(dealer.dealer_balance) < amount:
+                return "insufficient", sub, None
+
+            dealer.dealer_balance = float(dealer.dealer_balance) - amount
+            sub.status = "renew_processing"
+            entry = DealerLog(
+                dealer_id=dealer_id,
+                action="dealer_sub_renew_reserved",
+                details={
+                    "managed_subscription_id": sub.id,
+                    "plan": plan,
+                    "amount_usd": amount,
+                },
+            )
+            session.add(entry)
+            await session.flush()
+            return "reserved", sub, entry.id
+
+
+async def complete_dealer_subscription_renewal(
+    dealer_id: int,
+    sub_id: int,
+    log_id: int,
+    plan: str,
+    expire_at: datetime,
+    traffic_gb: int,
+) -> bool:
+    async with async_session_factory() as session:
+        async with session.begin():
+            sub = (
+                await session.execute(
+                    select(DealerSubscription)
+                    .where(
+                        DealerSubscription.id == sub_id,
+                        DealerSubscription.dealer_id == dealer_id,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            entry = (
+                await session.execute(
+                    select(DealerLog).where(DealerLog.id == log_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if (
+                sub is None
+                or sub.status != "renew_processing"
+                or entry is None
+                or entry.action != "dealer_sub_renew_reserved"
+            ):
+                return False
+            sub.plan = plan
+            sub.expire_at = expire_at
+            sub.traffic_limit_gb = traffic_gb
+            sub.status = "active"
+            entry.action = "dealer_sub_renew"
+            return True
+
+
+async def rollback_dealer_subscription_renewal(
+    dealer_id: int,
+    sub_id: int,
+    log_id: int,
+    error: str,
+) -> bool:
+    async with async_session_factory() as session:
+        async with session.begin():
+            sub = (
+                await session.execute(
+                    select(DealerSubscription)
+                    .where(
+                        DealerSubscription.id == sub_id,
+                        DealerSubscription.dealer_id == dealer_id,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            entry = (
+                await session.execute(
+                    select(DealerLog).where(DealerLog.id == log_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if (
+                sub is None
+                or sub.status != "renew_processing"
+                or entry is None
+                or entry.action != "dealer_sub_renew_reserved"
+            ):
+                return False
+
+            dealer = (
+                await session.execute(
+                    select(User).where(User.id == dealer_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            amount = float((entry.details or {}).get("amount_usd", 0))
+            if dealer is not None:
+                dealer.dealer_balance = float(dealer.dealer_balance) + amount
+            sub.status = "active"
+            details = dict(entry.details or {})
+            details["error"] = str(error)[:200]
+            entry.details = details
+            entry.action = "dealer_sub_renew_rollback"
+            return True
+
 
 async def create_dealer_log(dealer_id: int, action: str, order_id: int | None = None, details: dict | None = None) -> None:
     async with async_session_factory() as session:
