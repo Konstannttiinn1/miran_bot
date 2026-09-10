@@ -81,7 +81,7 @@ def payment_kb(t) -> InlineKeyboardMarkup:
         [_btn(t, "pay_stars", "pay:stars")],
         [_btn(t, "pay_heleket", "pay:heleket")],
         [_btn(t, "pay_dealer", "pay:dealer")],
-        [_btn(t, "btn_back", "back:main")],
+        [_btn(t, "btn_back", "back:plans")],
     ])
 
 
