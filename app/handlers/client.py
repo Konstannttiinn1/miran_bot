@@ -8,7 +8,7 @@ from aiogram.types import InlineKeyboardMarkup, LabeledPrice
 from app.bot import bot
 from app.config import settings
 from app.handlers.states import Purchase
-from app.keyboards.builders import back_kb, dealer_confirm_kb, payment_kb
+from app.keyboards.builders import back_kb, dealer_confirm_kb, payment_kb, plans_kb
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services import heleket
@@ -114,6 +114,19 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
     await state.set_state(Purchase.choosing_payment)
     await callback.answer()
     await send_with_logo(callback, t("select_payment"), reply_markup=payment_kb(t))
+
+
+@router.callback_query(F.data == "back:plans")
+async def back_to_plans(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
+    data = await state.get_data()
+    with_test = bool(data.get("plans_with_test", False))
+    await state.set_state(Purchase.choosing_plan)
+    await callback.answer()
+    await send_with_logo(
+        callback,
+        t("select_plan"),
+        reply_markup=plans_kb(t, with_test=with_test, lang=lang),
+    )
 
 
 @router.callback_query(F.data.startswith("pay:"))
