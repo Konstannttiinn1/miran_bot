@@ -1,19 +1,51 @@
-"""Единый справочник тарифов ORION_VPN."""
+"""Единый справочник тарифов ORION_VPN.
+
+Розничная цена в туманах — единственный источник истины.
+Все долларовые суммы, Stars и дилерские списания выводятся из неё через
+TOMAN_PER_USD, чтобы цены разных способов оплаты не расходились.
+"""
 
 from math import ceil, floor
 
+from app.config import settings
+
+
 PLANS: dict[str, dict] = {
-    "test": {"days": 1, "price_usd": 0, "price_toman": 0, "traffic_gb": 1},
-    "10gb": {"days": 30, "price_usd": 1.15, "price_toman": 70000, "traffic_gb": 10},
-    "20gb": {"days": 30, "price_usd": 2.30, "price_toman": 140000, "traffic_gb": 20},
-    "30gb": {"days": 30, "price_usd": 3.45, "price_toman": 210000, "traffic_gb": 30},
-    "40gb": {"days": 30, "price_usd": 4.35, "price_toman": 265000, "traffic_gb": 40},
-    "50gb": {"days": 30, "price_usd": 5.25, "price_toman": 320000, "traffic_gb": 50},
-    "100gb": {"days": 30, "price_usd": 9.85, "price_toman": 600000, "traffic_gb": 100},
+    "test": {"days": 1, "price_toman": 0, "traffic_gb": 1},
+    "10gb": {"days": 30, "price_toman": 70000, "traffic_gb": 10},
+    "20gb": {"days": 30, "price_toman": 140000, "traffic_gb": 20},
+    "30gb": {"days": 30, "price_toman": 210000, "traffic_gb": 30},
+    "40gb": {"days": 30, "price_toman": 265000, "traffic_gb": 40},
+    "50gb": {"days": 30, "price_toman": 320000, "traffic_gb": 50},
+    "100gb": {"days": 30, "price_toman": 600000, "traffic_gb": 100},
 }
 
 TEST_TARIFF = "test"
 _FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def _validate_toman_rate(toman_per_usd: float) -> float:
+    rate = float(toman_per_usd)
+    if rate <= 0:
+        raise ValueError("toman_per_usd must be positive")
+    return rate
+
+
+def get_usd_price(plan: str, toman_per_usd: float | None = None) -> float:
+    """Возвращает полную розничную цену тарифа в USD из цены в туманах."""
+    if plan == TEST_TARIFF:
+        return 0.0
+    rate = _validate_toman_rate(
+        settings.toman_per_usd if toman_per_usd is None else toman_per_usd
+    )
+    return float(PLANS[plan]["price_toman"]) / rate
+
+
+# Совместимость со старым кодом, где PLANS[plan]["price_usd"] читается напрямую
+# (например, криптоплатёж). Значение больше не задаётся вручную и поэтому
+# не может разойтись с иранской розничной ценой.
+for _plan_key, _tariff in PLANS.items():
+    _tariff["price_usd"] = round(get_usd_price(_plan_key), 6)
 
 
 def get_tariff(plan: str) -> dict:
@@ -23,7 +55,7 @@ def get_tariff(plan: str) -> dict:
 def get_rub_price(plan: str, rub_per_usd: float) -> int:
     if plan == TEST_TARIFF:
         return 0
-    raw = float(PLANS[plan]["price_usd"]) * rub_per_usd
+    raw = get_usd_price(plan) * rub_per_usd
     return max(10, int(floor(raw / 10 + 0.5) * 10))
 
 
@@ -32,7 +64,8 @@ def get_stars_price(plan: str, star_reward_usd: float) -> int:
         return 0
     if star_reward_usd <= 0:
         raise ValueError("star_reward_usd must be positive")
-    return max(1, ceil(float(PLANS[plan]["price_usd"]) / star_reward_usd))
+    # Stars целые, поэтому округляем вверх, чтобы платёж не оказался ниже тарифа.
+    return max(1, ceil(get_usd_price(plan) / star_reward_usd))
 
 
 def get_price_display(plan: str, lang: str, rub_per_usd: float = 90.0) -> str:
@@ -42,7 +75,7 @@ def get_price_display(plan: str, lang: str, rub_per_usd: float = 90.0) -> str:
         return f"{toman.translate(_FA_DIGITS)} تومان"
     if lang == "ru":
         return f"{get_rub_price(plan, rub_per_usd)} ₽"
-    return f'${float(tariff["price_usd"]):.2f}'
+    return f"${get_usd_price(plan):.2f}"
 
 
 def get_plan_button_text(plan: str, lang: str, rub_per_usd: float = 90.0) -> str:
@@ -60,10 +93,11 @@ def get_dealer_debit_usd(
     toman_per_usd: float,
     dealer_discount: float = 0.5,
 ) -> float:
-    """Конвертирует розничную цену в туманах в USD и применяет дилерскую скидку."""
-    if toman_per_usd <= 0:
-        raise ValueError("toman_per_usd must be positive")
+    """Берёт долю дилерской закупки от реальной розничной цены в USD.
+
+    При dealer_discount=0.5 розница делится 50/50: половина списывается
+    с долларового баланса дилера, вторая половина остаётся его маржой.
+    """
     if not 0 < dealer_discount <= 1:
         raise ValueError("dealer_discount must be in (0, 1]")
-    retail_toman = float(PLANS[plan]["price_toman"])
-    return round((retail_toman / toman_per_usd) * dealer_discount, 3)
+    return round(get_usd_price(plan, toman_per_usd) * dealer_discount, 3)
