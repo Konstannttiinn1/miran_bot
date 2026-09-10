@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     xui_password: str = ""
     xui_token: str = ""
     xui_inbound_id: int = 1
+    xui_inbound_id_de: int = 2
     xui_sub_url: str = ""
 
     # Heleket
