@@ -29,12 +29,14 @@ class Settings(BaseSettings):
     heleket_webhook_url: str = ""
     heleket_enabled: bool = False
 
-    # Локальные цены / Telegram Stars
+    # Курсы / Telegram Stars
+    # Розничная цена хранится в туманах, остальные валюты считаются от неё.
     rub_per_usd: float = 90.0
-    toman_per_usd: float = 61000.0
+    toman_per_usd: float = 235000.0
     stars_reward_usd: float = 0.013
 
     # Дилер: внутренний баланс всегда в USD
+    # 0.5 = дилер покупает за 50% розничной цены, оставшиеся 50% — его маржа.
     dealer_discount: float = 0.5
     dealer_card_number: str = "0000-0000-0000-0000"
     dealer_contact: str = "@dealer"
