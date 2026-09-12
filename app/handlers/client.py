@@ -15,7 +15,7 @@ from app.services import heleket
 from app.services.subscription import grant_vpn
 from app.utils.emojis import apply_emoji
 from app.utils.menu import send_main_menu, send_with_logo
-from app.utils.notifications import notify_admins
+from app.utils.notifications import notify_admins, notify_admins_photo
 from app.utils.tariffs import PLANS, get_dealer_debit_usd, get_stars_price
 
 log = logging.getLogger(__name__)
@@ -314,15 +314,19 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
     await db_repo.update_order(order_id, receipt_photo_id=photo, status="pending_dealer")
     await message.answer(t("receipt_received"))
 
+    tariff = PLANS[plan]
+    traffic_gb = int(tariff["traffic_gb"])
+    days = int(tariff["days"])
+    client_price = int(tariff["price_toman"])
+    dealer_price_usd = get_dealer_debit_usd(
+        plan,
+        settings.toman_per_usd,
+        settings.dealer_discount,
+    )
+
     dealers = await db_repo.list_dealers()
     for d in dealers:
         try:
-            client_price = int(PLANS[plan]["price_toman"])
-            dealer_price_usd = get_dealer_debit_usd(
-                plan,
-                settings.toman_per_usd,
-                settings.dealer_discount,
-            )
             await bot.send_photo(
                 d.telegram_id,
                 photo,
@@ -340,9 +344,17 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
         except Exception:
             log.exception("Не удалось уведомить дилера %s", d.telegram_id)
 
-    await notify_admins(
-        f"📎 Новый чек по заказу #{order_id} от {db_user.username or db_user.telegram_id}"
+    username = f"@{db_user.username}" if db_user.username else "—"
+    admin_caption = (
+        f"📎 <b>Новый чек по заказу #{order_id}</b>\n"
+        f"👤 Пользователь: {h(username)}\n"
+        f"🆔 Telegram ID: <code>{db_user.telegram_id}</code>\n"
+        f"📦 Тариф: {traffic_gb} ГБ · {days} дней\n"
+        f"💰 Клиент платит: {client_price:,} Toman\n"
+        f"🤝 Списание дилера: {_format_usd(dealer_price_usd)}\n"
+        "⏳ Статус: ждёт подтверждения дилера"
     )
+    await notify_admins_photo(photo, admin_caption)
 
 
 @router.message(Purchase.waiting_receipt)
