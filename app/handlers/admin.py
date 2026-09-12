@@ -30,8 +30,9 @@ class Admin(StatesGroup):
 
 async def user_card_text(user) -> str:
     sub = await db_repo.get_subscription(user.id)
+    username = f"@{user.username}" if user.username else "—"
     lines = [
-        f"👤 {user.username or '-'}",
+        f"👤 {username}",
         f"🆔 {user.telegram_id}",
         f"🎭 Роль: {user.role}",
         f"🌐 Язык: {user.lang}",
@@ -75,7 +76,7 @@ async def users_page_kb(page: int) -> InlineKeyboardMarkup:
     if (page + 1) * PER_PAGE < total:
         nav.append(raw_btn("➡️", f"admin_users:{page + 1}"))
     rows.append(nav)
-    rows.append([raw_btn("🔎 Поиск по ID", "admin:search")])
+    rows.append([raw_btn("🔎 Поиск по ID / @username", "admin:search")])
     rows.append([raw_btn(BACK_ADMIN, "back:admin")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -115,19 +116,26 @@ async def users_page(cb: types.CallbackQuery, t, lang, db_user):
 async def ask_search(cb: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     await state.set_state(Admin.waiting_user_id)
     await cb.answer()
-    await cb.message.answer("🔎 Введи telegram_id пользователя:")
+    await cb.message.answer("🔎 Введи telegram_id или @username пользователя:")
 
 
 @router.message(Admin.waiting_user_id)
 async def show_user(msg: types.Message, t, lang, db_user, state: FSMContext):
     await state.clear()
     raw = (msg.text or "").strip()
-    if not raw.isdigit():
-        await msg.answer("Это не число.")
+
+    if raw.isdigit():
+        user = await db_repo.get_user_by_tg(int(raw))
+    elif raw.startswith("@") and len(raw) > 1:
+        user = await db_repo.get_user_by_username(raw)
+    else:
+        await msg.answer("Введи telegram_id числом или @username через собаку.")
         return
-    user = await db_repo.get_user_by_tg(int(raw))
+
     if user is None:
-        await msg.answer("Пользователь не найден.")
+        await msg.answer(
+            "Пользователь не найден. Поиск по @username работает, если пользователь уже заходил в бота и Telegram передал его username."
+        )
         return
     await msg.answer(await user_card_text(user), reply_markup=user_actions_kb(user.telegram_id))
 
