@@ -69,7 +69,13 @@ class XuiClient:
         }
         r = await http.post(
             f"{self.base}/panel/api/clients/add",
-            json={"client": client, "inboundIds": [settings.xui_inbound_id]},
+            json={
+                "client": client,
+                "inboundIds": [
+                    settings.xui_inbound_id,
+                    settings.xui_inbound_id_de,
+                ],
+            },
         )
         data = r.json()
         if not data.get("success"):
