@@ -106,5 +106,6 @@
   "promo_redeem_already_used": "Ты уже использовал этот промокод.",
   "promo_redeem_no_subscription": "Сначала нужна активная подписка.",
   "promo_redeem_failed": "Не удалось применить промокод; активация возвращена.",
-  "promo_redeem_success": "✅ Промокод применён: {days} дн. и {traffic} ГБ.\\nПодписка действует до: {expire}."
+  "promo_redeem_success": "✅ Промокод применён: {days} дн. и {traffic} ГБ.\\nПодписка действует до: {expire}.",
+  "promo_dealer_activated": "🎟️ <b>Активация промокода</b>\n\nКод <code>{code}</code> активировал пользователь {user}.\n🎁 Бонус: {days} дн. + {traffic} ГБ\n📅 Подписка до: {expire}"
 }
