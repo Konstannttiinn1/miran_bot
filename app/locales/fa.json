@@ -106,5 +106,6 @@
   "promo_redeem_already_used": "شما قبلاً از این کد استفاده کرده‌اید.",
   "promo_redeem_no_subscription": "ابتدا باید یک اشتراک فعال داشته باشید.",
   "promo_redeem_failed": "اعمال کد ناموفق بود؛ سهمیه کد برگردانده شد.",
-  "promo_redeem_success": "✅ کد اعمال شد: {days} روز و {traffic} گیگابایت.\\nاعتبار تا: {expire}."
+  "promo_redeem_success": "✅ کد اعمال شد: {days} روز و {traffic} گیگابایت.\\nاعتبار تا: {expire}.",
+  "promo_dealer_activated": "🎟️ <b>فعال‌سازی کد تخفیف</b>\n\nکد <code>{code}</code> توسط {user} فعال شد.\n🎁 هدیه: {days} روز + {traffic} گیگابایت\n📅 اعتبار اشتراک: {expire}"
 }
