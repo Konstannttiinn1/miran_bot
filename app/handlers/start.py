@@ -13,7 +13,7 @@ from app.keyboards.builders import (admin_menu_kb, back_kb, dealer_menu_kb,
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
-from app.services.xui_api import XuiClient
+from app.services.vpn_provider import subscription_link
 from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
 
@@ -213,14 +213,12 @@ async def get_link(callback: types.CallbackQuery, t, lang, db_user):
         await callback.answer()
         return
     try:
-        client = await XuiClient().get_client(sub.xui_email)
+        link = await subscription_link(sub.xui_email)
     except Exception:
-        client = None
+        link = None
     await callback.answer()
 
-    sub_id = (client or {}).get("subId")
-    if sub_id:
-        link = f"{settings.xui_sub_url.rstrip('/')}/{sub_id}"
+    if link:
         await send_with_logo(
             callback,
             t("connection_link", link=h(link)),

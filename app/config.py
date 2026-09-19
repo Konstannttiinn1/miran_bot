@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     xui_inbound_id_de: int = 2
     xui_sub_url: str = ""
 
+    # VPN provider. Keep xui until Remnawave is fully configured and tested.
+    vpn_provider: str = "xui"
+
+    # Reserved for the Remnawave adapter; leave blank for now.
+    remnawave_api_url: str = ""
+    remnawave_api_token: str = ""
+    remnawave_subscription_url: str = ""
+    remnawave_squad_uuid: str = ""
+
     # Heleket
     heleket_merchant_id: str = ""
     heleket_api_key: str = ""

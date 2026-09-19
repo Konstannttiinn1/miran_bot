@@ -24,7 +24,11 @@ from app.keyboards.builders import (
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
-from app.services.xui_api import XuiApiError, XuiClient
+from app.services.vpn_provider import (
+    create_test_client,
+    get_vpn_provider,
+    subscription_link,
+)
 from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_with_logo
 from app.utils.tariffs import PLANS, get_dealer_debit_usd
@@ -82,13 +86,9 @@ def _sub_status_icon(sub) -> str:
 
 async def _subscription_link(sub) -> str | None:
     try:
-        client = await XuiClient().get_client(sub.xui_email)
+        return await subscription_link(sub.xui_email)
     except Exception:
         return None
-    sub_id = (client or {}).get("subId")
-    if not sub_id:
-        return None
-    return f"{settings.xui_sub_url.rstrip('/')}/{sub_id}"
 
 
 async def _show_subscription_card(
@@ -227,7 +227,7 @@ async def dealer_buy_confirm(callback: types.CallbackQuery, t, lang, db_user, st
     await callback.answer("⏳")
     tariff = PLANS[plan]
     try:
-        sub_token = await XuiClient().add_client(
+        await get_vpn_provider().add_client(
             email=sub.xui_email,
             days=int(tariff["days"]),
             limit_ip=1,
@@ -256,7 +256,7 @@ async def dealer_buy_confirm(callback: types.CallbackQuery, t, lang, db_user, st
         )
         return
 
-    link = f"{settings.xui_sub_url.rstrip('/')}/{sub_token}"
+    link = await subscription_link(sub.xui_email)
     await state.set_state(DealerManagedSubscription.waiting_name)
     await state.update_data(sub_id=sub.id, page=0)
     await send_with_logo(
@@ -518,11 +518,11 @@ async def dealer_subscription_renew_confirm(callback: types.CallbackQuery, t, la
     await callback.answer("⏳")
     tariff = PLANS[plan]
     try:
-        xui = XuiClient()
-        current = await xui.get_client(sub.xui_email)
+        provider = get_vpn_provider()
+        current = await provider.get_client(sub.xui_email)
         if current is None:
-            raise XuiApiError("managed client not found in 3x-UI")
-        await xui.add_client(
+            raise RuntimeError("managed client not found in VPN provider")
+        await provider.add_client(
             email=sub.xui_email,
             days=int(tariff["days"]),
             limit_ip=1,
@@ -584,7 +584,7 @@ async def dealer_test_link(callback: types.CallbackQuery, t, lang, db_user):
     await callback.answer("⏳")
 
     try:
-        xui_email, link = await XuiClient().create_test_client(
+        xui_email, link = await create_test_client(
             dealer_id=db_user.id,
             days=settings.dealer_test_days,
             traffic_gb=settings.dealer_test_traffic_gb,

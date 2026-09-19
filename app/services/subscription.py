@@ -1,13 +1,14 @@
 import logging
-import random
-import string
-import uuid as uuid_lib
 from datetime import timedelta
 
 from app.config import settings
 from app.database.models import utcnow
 from app.repositories import db_repo
-from app.services.xui_api import XuiClient
+from app.services.vpn_provider import (
+    get_vpn_provider,
+    reset_subscription_link,
+    subscription_link,
+)
 from app.utils.tariffs import PLANS
 
 log = logging.getLogger(__name__)
@@ -18,9 +19,14 @@ async def grant_vpn(user_id: int, telegram_id: int, plan: str) -> tuple[str, obj
     traffic_gb = PLANS[plan]["traffic_gb"]
     email = str(telegram_id)
 
-    xui = XuiClient()
-    sub_id = await xui.add_client(email=email, days=days, limit_ip=1, traffic_gb=traffic_gb)
-    link = f"{settings.xui_sub_url.rstrip('/')}/{sub_id}"
+    provider = get_vpn_provider()
+    await provider.add_client(
+        email=email,
+        days=days,
+        limit_ip=1,
+        traffic_gb=traffic_gb,
+    )
+    link = await subscription_link(email)
 
     sub = await db_repo.get_subscription(user_id)
     base = sub.expire_at if sub and sub.expire_at > utcnow() else utcnow()
@@ -33,8 +39,8 @@ async def grant_vpn(user_id: int, telegram_id: int, plan: str) -> tuple[str, obj
 
 async def extend_subscription(user, days: int) -> None:
     email = str(user.telegram_id)
-    xui = XuiClient()
-    await xui.extend_client(email, days)
+    provider = get_vpn_provider()
+    await provider.extend_client(email, days)
 
     sub = await db_repo.get_subscription(user.id)
     if sub is None:
@@ -46,14 +52,10 @@ async def extend_subscription(user, days: int) -> None:
 
 
 async def reset_link(user) -> str:
-    email = str(user.telegram_id)
-    new_sub = "".join(random.choices(string.ascii_lowercase + string.digits, k=16))
-    xui = XuiClient()
-    await xui.update_client(email, id=str(uuid_lib.uuid4()), subId=new_sub)
-    return new_sub
+    return await reset_subscription_link(str(user.telegram_id))
 
 
 async def set_blocked(user, blocked: bool) -> None:
     await db_repo.set_user_blocked(user.telegram_id, blocked)
-    xui = XuiClient()
-    await xui.set_enabled(str(user.telegram_id), enabled=not blocked)
+    provider = get_vpn_provider()
+    await provider.set_enabled(str(user.telegram_id), enabled=not blocked)
