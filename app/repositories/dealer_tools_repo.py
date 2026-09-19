@@ -65,6 +65,25 @@ async def get_dealer_test(dealer_id: int, test_id: int) -> DealerTest | None:
         return result.scalar_one_or_none()
 
 
+async def update_dealer_test_expiry(
+    dealer_id: int,
+    test_id: int,
+    expire_at: datetime,
+) -> bool:
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(DealerTest)
+            .where(DealerTest.id == test_id, DealerTest.dealer_id == dealer_id)
+            .with_for_update()
+        )
+        test = result.scalar_one_or_none()
+        if test is None or test.status != "active":
+            return False
+        test.expire_at = expire_at
+        await session.commit()
+        return True
+
+
 async def set_dealer_test_status(
     dealer_id: int,
     test_id: int,
