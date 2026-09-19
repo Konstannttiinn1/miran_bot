@@ -9,10 +9,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.bot import bot
 from app.config import settings
 from app.database.models import utcnow
 from app.keyboards.builders import back_kb, dealer_menu_kb, main_menu_kb, raw_btn
-from app.middlewares.i18n import I18nMiddleware
+from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.repositories import dealer_tools_repo
 from app.services.vpn_provider import get_vpn_provider, subscription_link
@@ -639,5 +640,24 @@ async def promo_redeem(message: types.Message, t, db_user, state: FSMContext):
         await state.clear()
         await message.answer(t("promo_redeem_failed"), reply_markup=main_menu_kb(t))
         return
+    dealer = await db_repo.get_user_by_id(promo.dealer_id)
+    if dealer is not None:
+        user_name = f"@{db_user.username}" if db_user.username else str(db_user.telegram_id)
+        try:
+            await bot.send_message(
+                dealer.telegram_id,
+                get_text(
+                    dealer.lang,
+                    "promo_dealer_activated",
+                    code=h(promo.code),
+                    user=h(user_name),
+                    days=promo.days,
+                    traffic=promo.traffic_gb,
+                    expire=new_expire.strftime("%d.%m.%Y"),
+                ),
+            )
+        except Exception:
+            # Уведомление не должно отменять уже выданный пользователю бонус.
+            log.exception("Could not notify dealer about promo redemption")
     await state.clear()
     await message.answer(t("promo_redeem_success", days=promo.days, traffic=promo.traffic_gb, expire=new_expire.strftime("%d.%m.%Y")), reply_markup=main_menu_kb(t))
