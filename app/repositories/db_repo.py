@@ -5,7 +5,16 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 
 from app.database.engine import async_session_factory
-from app.database.models import (\n    DealerLog,\n    DealerSubscription,\n    DealerTest,\n    Order,\n    PromoCode,\n    PromoRedemption,\n    Subscription,\n    User,\n)\n
+from app.database.models import (
+    DealerLog,
+    DealerSubscription,
+    DealerTest,
+    Order,
+    PromoCode,
+    PromoRedemption,
+    Subscription,
+    User,
+)
 
 async def get_or_create_user(telegram_id: int, username: str | None = None) -> User:
     async with async_session_factory() as session:
