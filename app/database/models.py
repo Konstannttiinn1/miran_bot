@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Integer, JSON, String
+from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -81,4 +81,52 @@ class DealerLog(Base):
     action: Mapped[str] = mapped_column(String)
     order_id: Mapped[int | None] = mapped_column(nullable=True)
     details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class DealerTest(Base):
+    """Тестовая подписка, созданная конкретным дилером."""
+
+    __tablename__ = "dealer_tests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dealer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    client_name: Mapped[str] = mapped_column(String, default="")
+    xui_email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    expire_at: Mapped[datetime] = mapped_column()
+    traffic_limit_gb: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String, default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class PromoCode(Base):
+    """Промокод дилера: дни либо дни + трафик."""
+
+    __tablename__ = "promo_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dealer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(32))  # days / days_traffic
+    days: Mapped[int] = mapped_column(Integer)
+    traffic_gb: Mapped[int] = mapped_column(Integer, default=0)
+    expire_at: Mapped[datetime] = mapped_column()
+    max_uses: Mapped[int] = mapped_column(Integer)
+    uses_count: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class PromoRedemption(Base):
+    """Одна запись = одно использование кода одним пользователем."""
+
+    __tablename__ = "promo_redemptions"
+    __table_args__ = (
+        UniqueConstraint("promo_id", "user_id", name="uq_promo_redemption_once"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    promo_id: Mapped[int] = mapped_column(ForeignKey("promo_codes.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)

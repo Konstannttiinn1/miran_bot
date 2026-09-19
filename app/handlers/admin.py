@@ -11,7 +11,7 @@ from app.keyboards.builders import admin_menu_kb, raw_btn
 from app.middlewares.i18n import I18nMiddleware
 from app.repositories import db_repo
 from app.services import subscription as sub_service
-from app.services.xui_api import XuiClient
+from app.services.vpn_provider import get_vpn_provider
 
 log = logging.getLogger(__name__)
 
@@ -168,8 +168,8 @@ async def admin_action(cb: types.CallbackQuery, t, lang, db_user):
             await sub_service.extend_subscription(user, -7)
             text = "✅ -7 дней"
         elif action == "reset":
-            new_sub = await sub_service.reset_link(user)
-            text = f"✅ Новая ссылка: {settings.xui_sub_url.rstrip('/')}/{new_sub}"
+            link = await sub_service.reset_link(user)
+            text = f"✅ Новая ссылка: {link}"
         elif action == "block":
             await sub_service.set_blocked(user, True)
             text = "🚫 Заблокирован"
@@ -178,7 +178,7 @@ async def admin_action(cb: types.CallbackQuery, t, lang, db_user):
             text = "✅ Разблокирован"
         elif action == "del":
             try:
-                await XuiClient().delete_client(str(tg_id))
+                await get_vpn_provider().delete_client(str(tg_id))
             except Exception:
                 log.warning("panel delete failed for %s", tg_id)
             await db_repo.delete_user_full(tg_id)
