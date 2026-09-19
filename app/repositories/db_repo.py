@@ -5,8 +5,16 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 
 from app.database.engine import async_session_factory
-from app.database.models import DealerLog, DealerSubscription, Order, Subscription, User
-
+from app.database.models import (
+    DealerLog,
+    DealerSubscription,
+    DealerTest,
+    Order,
+    PromoCode,
+    PromoRedemption,
+    Subscription,
+    User,
+)
 
 async def get_or_create_user(telegram_id: int, username: str | None = None) -> User:
     async with async_session_factory() as session:
@@ -83,9 +91,26 @@ async def delete_user_full(telegram_id: int) -> None:
         if user is None:
             return
         uid = user.id
+        promo_ids = [
+            value for value in (
+                await session.execute(
+                    select(PromoCode.id).where(PromoCode.dealer_id == uid)
+                )
+            ).scalars().all()
+        ]
+        redemptions = await session.execute(
+            select(PromoRedemption).where(
+                (PromoRedemption.user_id == uid)
+                | (PromoRedemption.promo_id.in_(promo_ids))
+            )
+        )
+        for redemption in redemptions.scalars().all():
+            await session.delete(redemption)
         for model, column in ((Subscription, Subscription.user_id),
                               (Order, Order.user_id),
                               (DealerSubscription, DealerSubscription.dealer_id),
+                              (DealerTest, DealerTest.dealer_id),
+                              (PromoCode, PromoCode.dealer_id),
                               (DealerLog, DealerLog.dealer_id)):
             rows = await session.execute(select(model).where(column == uid))
             for row in rows.scalars().all():

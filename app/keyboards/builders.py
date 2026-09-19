@@ -53,6 +53,7 @@ def language_kb(t=None, with_back: bool = False) -> InlineKeyboardMarkup:
 def main_menu_kb(t) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [_btn(t, "btn_my_vpn", "menu:my_vpn")],
+        [_btn(t, "btn_promo", "menu:promo")],
         [_btn(t, "btn_support", "menu:support")],
         [_btn(t, "btn_lang", "menu:lang")],
     ])
@@ -99,9 +100,11 @@ def back_kb(t, callback_data: str) -> InlineKeyboardMarkup:
 
 def dealer_menu_kb(t) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [raw_btn("🎁 دریافت لینک تست", "dealer:test_link")],
-        [raw_btn("🛒 خرید اشتراک", "dealer:buy_sub")],
-        [raw_btn("📂 اشتراک‌های من", "dealer:subs")],
+        [_btn(t, "dealer_btn_test", "dealer:test_link")],
+        [_btn(t, "dealer_btn_tests", "dealer:tests")],
+        [_btn(t, "dealer_btn_promos", "dealer:promos")],
+        [_btn(t, "dealer_btn_buy_sub", "dealer:buy_sub")],
+        [_btn(t, "dealer_btn_subscriptions", "dealer:subs")],
         [_btn(t, "btn_dealer_balance", "dealer:balance")],
         [_btn(t, "btn_dealer_history", "dealer:history")],
         [_btn(t, "btn_lang", "menu:lang")],
