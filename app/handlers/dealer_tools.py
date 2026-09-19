@@ -410,6 +410,13 @@ async def _show_promos(callback, t, dealer_id: int, page: int) -> None:
         f"{'🟢' if promo.is_active else '🔴'} {promo.code} · {promo.uses_count}/{promo.max_uses}",
         f"dealer:promocard:{promo.id}:{page}",
     )] for promo in items]
+    nav = []
+    if page:
+        nav.append(raw_btn("⬅️", f"dealer:promos:{page - 1}"))
+    if page + 1 < pages:
+        nav.append(raw_btn("➡️", f"dealer:promos:{page + 1}"))
+    if nav:
+        rows.append(nav)
     rows.append([raw_btn(t("promo_create"), "dealer:promo:new")])
     rows.append([raw_btn(t("btn_back"), "back:dealer")])
     await callback.answer()
