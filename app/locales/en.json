@@ -106,5 +106,6 @@
   "promo_redeem_already_used": "You have already used this promo code.",
   "promo_redeem_no_subscription": "You need an active subscription first.",
   "promo_redeem_failed": "Could not apply the promo code; the activation was returned.",
-  "promo_redeem_success": "✅ Promo code applied: {days} days and {traffic} GB.\\nSubscription is valid until: {expire}."
+  "promo_redeem_success": "✅ Promo code applied: {days} days and {traffic} GB.\\nSubscription is valid until: {expire}.",
+  "promo_dealer_activated": "🎟️ <b>Promo code redeemed</b>\n\nUser {user} redeemed <code>{code}</code>.\n🎁 Reward: {days} days + {traffic} GB\n📅 Subscription until: {expire}"
 }
