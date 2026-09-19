@@ -160,6 +160,7 @@ async def admin_action(cb: types.CallbackQuery, t, lang, db_user):
         await cb.answer("Не найден", show_alert=True)
         return
 
+    show_alert = True
     try:
         if action == "add7":
             await sub_service.extend_subscription(user, 7)
@@ -169,7 +170,13 @@ async def admin_action(cb: types.CallbackQuery, t, lang, db_user):
             text = "✅ -7 дней"
         elif action == "reset":
             new_sub = await sub_service.reset_link(user)
-            text = f"✅ Новая ссылка: {settings.xui_sub_url.rstrip('/')}/{new_sub}"
+            new_link = f"{settings.xui_sub_url.rstrip('/')}/{new_sub}"
+            await cb.message.answer(
+                f"✅ <b>Новая ссылка</b>\n\n<code>{h(new_link)}</code>\n\n"
+                "Ссылка сохранена в этом чате — её можно скопировать."
+            )
+            text = "✅ Ссылка отправлена в чат"
+            show_alert = False
         elif action == "block":
             await sub_service.set_blocked(user, True)
             text = "🚫 Заблокирован"
@@ -192,7 +199,7 @@ async def admin_action(cb: types.CallbackQuery, t, lang, db_user):
         await cb.message.answer(f"Ошибка: {h(str(e))}")
         return
 
-    await cb.answer(text, show_alert=True)
+    await cb.answer(text, show_alert=show_alert)
     fresh = await db_repo.get_user_by_tg(tg_id)
     await cb.message.answer(await user_card_text(fresh), reply_markup=user_actions_kb(tg_id))
 
