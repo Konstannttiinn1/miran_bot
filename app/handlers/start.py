@@ -137,6 +137,9 @@ async def topup(message: types.Message, t, lang, db_user):
 @router.callback_query(F.data.startswith("set_lang:"))
 async def set_lang(callback: types.CallbackQuery, t, lang, db_user):
     new_lang = callback.data.split(":")[1]
+    if new_lang not in {"fa", "en", "ru"} or new_lang not in settings.langs_list:
+        await callback.answer(strip_custom_emoji_tags(t("language_invalid")), show_alert=True)
+        return
     await db_repo.set_user_lang(callback.from_user.id, new_lang)
 
     nt = lambda key, **kw: get_text(new_lang, key, **kw)

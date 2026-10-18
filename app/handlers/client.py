@@ -32,8 +32,7 @@ def _format_toman(amount: int | float, lang: str) -> str:
     text = f"{int(amount):,}"
     if lang == "fa":
         text = text.translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")).replace(",", "،")
-        return f"{text} تومان"
-    return f"{text} Toman"
+    return get_text(lang, "currency_toman", amount=text)
 
 
 def _format_usd(amount: int | float) -> str:

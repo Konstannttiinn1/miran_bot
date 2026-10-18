@@ -17,6 +17,7 @@ from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.repositories import dealer_tools_repo
 from app.services.vpn_provider import get_vpn_provider, subscription_link
+from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
 
 log = logging.getLogger(__name__)
@@ -56,10 +57,10 @@ class PromoRedeem(StatesGroup):
     code = State()
 
 
-async def _dealer(callback: types.CallbackQuery, user) -> bool:
+async def _dealer(callback: types.CallbackQuery, user, t) -> bool:
     if user.role == "dealer":
         return True
-    await callback.answer("Dealer access only", show_alert=True)
+    await callback.answer(strip_custom_emoji_tags(t("dealer_access_only")), show_alert=True)
     return False
 
 
@@ -133,7 +134,7 @@ async def _ask_test_traffic(target, t) -> None:
 
 @router.callback_query(F.data == "dealer:test_link")
 async def test_start(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     await state.clear()
     await state.set_state(DealerTestForm.name)
@@ -143,7 +144,7 @@ async def test_start(callback: types.CallbackQuery, t, db_user, state: FSMContex
 
 @router.callback_query(F.data.startswith("dealer:test:back:"))
 async def test_back(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     step = callback.data.rsplit(":", 1)[-1]
     await callback.answer()
@@ -206,7 +207,7 @@ async def test_traffic(message: types.Message, t, db_user, state: FSMContext):
 
 @router.callback_query(F.data == "dealer:test:confirm")
 async def test_confirm(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     data = await state.get_data()
     try:
@@ -215,7 +216,7 @@ async def test_confirm(callback: types.CallbackQuery, t, db_user, state: FSMCont
         traffic = int(data["test_traffic"])
     except (KeyError, ValueError):
         await state.clear()
-        await callback.answer(t("dealer_flow_expired"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_flow_expired")), show_alert=True)
         return
 
     status, slot_id, used = await db_repo.reserve_dealer_test_slot(
@@ -226,14 +227,14 @@ async def test_confirm(callback: types.CallbackQuery, t, db_user, state: FSMCont
         traffic_gb=traffic,
     )
     if status == "limit":
-        await callback.answer(t("dealer_test_daily_limit", limit=settings.dealer_test_daily_limit), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_test_daily_limit", limit=settings.dealer_test_daily_limit)), show_alert=True)
         return
     if status != "reserved" or slot_id is None:
-        await callback.answer(t("dealer_action_failed"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_action_failed")), show_alert=True)
         return
 
     email = f"dtest-{db_user.id}-{uuid4().hex[:16]}"
-    await callback.answer(t("dealer_processing"))
+    await callback.answer(strip_custom_emoji_tags(t("dealer_processing")))
     try:
         provider = get_vpn_provider()
         await provider.add_client(email=email, days=days, limit_ip=1, traffic_gb=traffic)
@@ -286,7 +287,7 @@ async def _show_tests(callback, t, dealer_id: int, page: int) -> None:
 
 @router.callback_query(F.data == "dealer:tests")
 async def tests_first(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     await state.clear()
     await _show_tests(callback, t, db_user.id, 0)
@@ -294,7 +295,7 @@ async def tests_first(callback: types.CallbackQuery, t, db_user, state: FSMConte
 
 @router.callback_query(F.data.startswith("dealer:tests:"))
 async def tests_page(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     try:
         page = int(callback.data.rsplit(":", 1)[-1])
@@ -305,12 +306,12 @@ async def tests_page(callback: types.CallbackQuery, t, db_user, state: FSMContex
 
 @router.callback_query(F.data.startswith("dealer:testcard:"))
 async def test_card(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     _, _, raw_id, raw_page = callback.data.split(":")
     test = await dealer_tools_repo.get_dealer_test(db_user.id, int(raw_id))
     if test is None:
-        await callback.answer(t("dealer_not_found"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_not_found")), show_alert=True)
         return
     link = None
     try:
@@ -327,47 +328,47 @@ async def test_card(callback: types.CallbackQuery, t, db_user, state: FSMContext
 
 @router.callback_query(F.data.startswith("dealer:test:disable:"))
 async def test_disable(callback: types.CallbackQuery, t, db_user):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     _, _, _, raw_id, raw_page = callback.data.split(":")
     test = await dealer_tools_repo.get_dealer_test(db_user.id, int(raw_id))
     if test is None:
-        await callback.answer(t("dealer_not_found"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_not_found")), show_alert=True)
         return
     try:
         await get_vpn_provider().set_enabled(test.xui_email, False)
         await dealer_tools_repo.set_dealer_test_status(db_user.id, test.id, "disabled")
     except Exception:
         log.exception("Dealer test disable failed")
-        await callback.answer(t("dealer_action_failed"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_action_failed")), show_alert=True)
         return
-    await callback.answer(t("dealer_test_disabled"))
+    await callback.answer(strip_custom_emoji_tags(t("dealer_test_disabled")))
     await _show_tests(callback, t, db_user.id, int(raw_page))
 
 
 @router.callback_query(F.data.startswith("dealer:test:delete:"))
 async def test_delete(callback: types.CallbackQuery, t, db_user):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     _, _, _, raw_id, raw_page = callback.data.split(":")
     test = await dealer_tools_repo.get_dealer_test(db_user.id, int(raw_id))
     if test is None:
-        await callback.answer(t("dealer_not_found"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_not_found")), show_alert=True)
         return
     try:
         await get_vpn_provider().delete_client(test.xui_email)
         await dealer_tools_repo.set_dealer_test_status(db_user.id, test.id, "deleted")
     except Exception:
         log.exception("Dealer test delete failed")
-        await callback.answer(t("dealer_action_failed"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_action_failed")), show_alert=True)
         return
-    await callback.answer(t("dealer_test_deleted"))
+    await callback.answer(strip_custom_emoji_tags(t("dealer_test_deleted")))
     await _show_tests(callback, t, db_user.id, int(raw_page))
 
 
 @router.callback_query(F.data.startswith("dealer:test:extend:"))
 async def test_extend_start(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     _, _, _, raw_id, raw_page = callback.data.split(":")
     await state.set_state(DealerTestManage.extend_days)
@@ -426,7 +427,7 @@ async def _show_promos(callback, t, dealer_id: int, page: int) -> None:
 
 @router.callback_query(F.data == "dealer:promos")
 async def promos_first(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     await state.clear()
     await _show_promos(callback, t, db_user.id, 0)
@@ -434,7 +435,7 @@ async def promos_first(callback: types.CallbackQuery, t, db_user, state: FSMCont
 
 @router.callback_query(F.data.startswith("dealer:promos:"))
 async def promos_page(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     try:
         page = int(callback.data.rsplit(":", 1)[-1])
@@ -445,7 +446,7 @@ async def promos_page(callback: types.CallbackQuery, t, db_user, state: FSMConte
 
 @router.callback_query(F.data == "dealer:promo:new")
 async def promo_new(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     await state.clear()
     await state.set_state(DealerPromoForm.code)
@@ -466,7 +467,7 @@ async def promo_code(message: types.Message, t, db_user, state: FSMContext):
 
 @router.callback_query(F.data.startswith("dealer:promo:kind:"))
 async def promo_kind(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     kind = callback.data.rsplit(":", 1)[-1]
     if kind not in {"days", "days_traffic"}:
@@ -542,7 +543,7 @@ async def promo_uses(message: types.Message, t, db_user, state: FSMContext):
 
 @router.callback_query(F.data.startswith("dealer:promo:back:"))
 async def promo_back(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     step = callback.data.rsplit(":", 1)[-1]
     await callback.answer()
@@ -562,7 +563,7 @@ async def promo_back(callback: types.CallbackQuery, t, db_user, state: FSMContex
 
 @router.callback_query(F.data == "dealer:promo:confirm")
 async def promo_confirm(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     data = await state.get_data()
     try:
@@ -572,7 +573,7 @@ async def promo_confirm(callback: types.CallbackQuery, t, db_user, state: FSMCon
             int(data["promo_uses"]),
         )
     except ValueError:
-        await callback.answer(t("promo_code_taken"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("promo_code_taken")), show_alert=True)
         return
     await state.clear()
     await callback.answer()
@@ -581,12 +582,12 @@ async def promo_confirm(callback: types.CallbackQuery, t, db_user, state: FSMCon
 
 @router.callback_query(F.data.startswith("dealer:promocard:"))
 async def promo_card(callback: types.CallbackQuery, t, db_user):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     _, _, raw_id, raw_page = callback.data.split(":")
     promo = await dealer_tools_repo.get_dealer_promo(db_user.id, int(raw_id))
     if promo is None:
-        await callback.answer(t("dealer_not_found"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_not_found")), show_alert=True)
         return
     await callback.answer()
     await send_with_logo(callback, t("promo_card", code=h(promo.code), days=promo.days, traffic=promo.traffic_gb, expire=promo.expire_at.strftime("%d.%m.%Y"), uses=promo.uses_count, maximum=promo.max_uses, status=t("promo_status_active" if promo.is_active else "promo_status_disabled")), reply_markup=_promo_card_kb(t, promo, int(raw_page)))
@@ -594,13 +595,13 @@ async def promo_card(callback: types.CallbackQuery, t, db_user):
 
 @router.callback_query(F.data.startswith("dealer:promo:disable:"))
 async def promo_disable(callback: types.CallbackQuery, t, db_user):
-    if not await _dealer(callback, db_user):
+    if not await _dealer(callback, db_user, t):
         return
     _, _, _, raw_id, raw_page = callback.data.split(":")
     if not await dealer_tools_repo.deactivate_promo(db_user.id, int(raw_id)):
-        await callback.answer(t("dealer_action_failed"), show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_action_failed")), show_alert=True)
         return
-    await callback.answer(t("promo_disabled"))
+    await callback.answer(strip_custom_emoji_tags(t("promo_disabled")))
     await _show_promos(callback, t, db_user.id, int(raw_page))
 
 
