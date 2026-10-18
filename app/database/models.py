@@ -39,6 +39,15 @@ class Subscription(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class TrialClaim(Base):
+    """Одноразовый тест закреплён за Telegram ID, даже после удаления User."""
+
+    __tablename__ = "trial_claims"
+
+    telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class DealerSubscription(Base):
     """Отдельная VPN-подписка, купленная дилером для своего клиента."""
 

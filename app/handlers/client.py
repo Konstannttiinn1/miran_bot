@@ -12,11 +12,13 @@ from app.keyboards.builders import back_kb, dealer_confirm_kb, payment_kb, plans
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services import heleket
-from app.services.subscription import grant_vpn
+from app.services.subscription import TrialUnavailableError, grant_vpn
 from app.utils.emojis import apply_emoji
 from app.utils.menu import send_main_menu, send_with_logo
 from app.utils.notifications import notify_admins, notify_admins_photo
-from app.utils.tariffs import PLANS, get_dealer_debit_usd, get_stars_price
+from app.utils.tariffs import (
+    PLANS, RETIRED_PLANS, get_dealer_debit_usd, get_stars_price, get_tariff,
+)
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -94,16 +96,17 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
 
     if plan == "test":
         await state.clear()
-        order = await db_repo.create_order(db_user.id, "test", 0, "test")
+        # Не держим callback открытым, пока панель отвечает (до 30 секунд).
+        await callback.answer()
         try:
             link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, "test")
+        except TrialUnavailableError:
+            await callback.message.answer(t("test_unavailable"))
+            return
         except Exception:
             log.exception("test grant failed")
-            await db_repo.update_order(order.id, status="failed")
-            await callback.message.answer(t("payment_error"))
+            await callback.message.answer(t("test_activation_failed"))
             return
-        await db_repo.update_order(order.id, status="paid")
-        await callback.answer()
         await callback.message.answer(
             t("test_activated") + "\n" +
             apply_emoji(f"🔗 {h(link)}", settings.use_custom_emoji)
@@ -119,7 +122,11 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
 @router.callback_query(F.data == "back:plans")
 async def back_to_plans(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     data = await state.get_data()
-    with_test = bool(data.get("plans_with_test", False))
+    with_test = (
+        bool(data.get("plans_with_test", False))
+        and await db_repo.can_claim_test(db_user.id)
+    )
+    await state.update_data(plans_with_test=with_test)
     await state.set_state(Purchase.choosing_plan)
     await callback.answer()
     await send_with_logo(
@@ -227,17 +234,21 @@ async def stars_pre_checkout(query: types.PreCheckoutQuery, t, lang, db_user):
 
     order_id, payload_user_id, plan = parsed
     order = await db_repo.get_order(order_id)
-    expected = get_stars_price(plan, settings.stars_reward_usd) if plan in PLANS else -1
+    # Сумма зафиксирована в заказе: обновление прайса не ломает старый invoice.
+    expected = int(round(float(order.amount))) if order is not None else -1
     valid = (
         order is not None
         and order.user_id == db_user.id
         and payload_user_id == db_user.id
         and order.plan == plan
+        and plan != "test"
+        and (plan in PLANS or plan in RETIRED_PLANS)
+        and expected > 0
+        and float(order.amount) == expected
         and order.currency.lower() == "xtr"
         and order.status == "pending"
         and query.currency == "XTR"
         and int(query.total_amount) == expected
-        and int(round(float(order.amount))) == expected
     )
     await query.answer(ok=valid, error_message=None if valid else _payment_error(lang))
 
@@ -255,15 +266,18 @@ async def stars_successful_payment(message: types.Message, t, lang, db_user):
 
     order_id, payload_user_id, plan = parsed
     order = await db_repo.get_order(order_id)
-    expected = get_stars_price(plan, settings.stars_reward_usd) if plan in PLANS else -1
+    expected = int(round(float(order.amount))) if order is not None else -1
     valid = (
         order is not None
         and order.user_id == db_user.id
         and payload_user_id == db_user.id
         and order.plan == plan
+        and plan != "test"
+        and (plan in PLANS or plan in RETIRED_PLANS)
+        and expected > 0
+        and float(order.amount) == expected
         and order.currency.lower() == "xtr"
         and int(payment.total_amount) == expected
-        and int(round(float(order.amount))) == expected
     )
     if not valid:
         await notify_admins(
@@ -307,22 +321,33 @@ async def stars_successful_payment(message: types.Message, t, lang, db_user):
 async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMContext):
     data = await state.get_data()
     order_id = data.get("order_id")
-    plan = data.get("plan", "30gb")
     await state.clear()
+    order = await db_repo.get_order(order_id) if order_id is not None else None
+    if (
+        order is None or order.user_id != db_user.id
+        or order.currency.lower() != "usd" or order.status != "pending"
+        or order.plan == "test"
+        or (order.plan not in PLANS and order.plan not in RETIRED_PLANS)
+    ):
+        await message.answer(t("payment_error"))
+        return
+    plan = order.plan
 
     photo = message.photo[-1].file_id
     await db_repo.update_order(order_id, receipt_photo_id=photo, status="pending_dealer")
     await message.answer(t("receipt_received"))
 
-    tariff = PLANS[plan]
+    tariff = get_tariff(plan)
     traffic_gb = int(tariff["traffic_gb"])
     days = int(tariff["days"])
     client_price = int(tariff["price_toman"])
-    dealer_price_usd = get_dealer_debit_usd(
-        plan,
-        settings.toman_per_usd,
-        settings.dealer_discount,
+    dealer_price_usd = float(order.amount)
+    # Старый заказ может иметь цену до обновления прайса. Не подменяем
+    # указанную клиенту сумму новой розницей в уведомлении дилеру.
+    current_debit = round(
+        client_price / settings.toman_per_usd * settings.dealer_discount, 3,
     )
+    current_price = abs(current_debit - dealer_price_usd) < 1e-9
 
     dealers = await db_repo.list_dealers()
     for d in dealers:
@@ -336,7 +361,10 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
                     order_id=order_id,
                     username=db_user.username or db_user.telegram_id,
                     plan=plan,
-                    client_amount=_format_toman(client_price, d.lang),
+                    client_amount=(
+                        _format_toman(client_price, d.lang)
+                        if current_price else get_text(d.lang, "dealer_original_amount")
+                    ),
                     dealer_amount=_format_usd(dealer_price_usd),
                 ),
                 reply_markup=dealer_confirm_kb(order_id),
@@ -345,12 +373,16 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
             log.exception("Не удалось уведомить дилера %s", d.telegram_id)
 
     username = f"@{db_user.username}" if db_user.username else "—"
+    client_amount = (
+        f"{client_price:,} Toman" if current_price
+        else "по исходным реквизитам заказа"
+    )
     admin_caption = (
         f"📎 <b>Новый чек по заказу #{order_id}</b>\n"
         f"👤 Пользователь: {h(username)}\n"
         f"🆔 Telegram ID: <code>{db_user.telegram_id}</code>\n"
         f"📦 Тариф: {traffic_gb} ГБ · {days} дней\n"
-        f"💰 Клиент платит: {client_price:,} Toman\n"
+        f"💰 Клиент платит: {client_amount}\n"
         f"🤝 Списание дилера: {_format_usd(dealer_price_usd)}\n"
         "⏳ Статус: ждёт подтверждения дилера"
     )

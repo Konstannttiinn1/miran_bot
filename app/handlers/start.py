@@ -171,8 +171,7 @@ async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMCont
     now = utcnow()
 
     if sub is None or sub.expire_at <= now:
-        used_test = await db_repo.user_has_order(db_user.id, "test")
-        with_test = not used_test
+        with_test = await db_repo.can_claim_test(db_user.id)
         await state.set_state(Purchase.choosing_plan)
         await state.update_data(plans_with_test=with_test)
         screen_text = t("select_plan")
