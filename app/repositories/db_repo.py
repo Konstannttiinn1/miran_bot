@@ -3,6 +3,8 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.database.engine import async_session_factory
 from app.database.models import (
@@ -13,7 +15,9 @@ from app.database.models import (
     PromoCode,
     PromoRedemption,
     Subscription,
+    TrialClaim,
     User,
+    utcnow,
 )
 
 async def get_or_create_user(telegram_id: int, username: str | None = None) -> User:
@@ -744,9 +748,79 @@ async def list_users_page(page: int, per_page: int = 10) -> list[User]:
 async def user_has_order(user_id: int, plan: str) -> bool:
     async with async_session_factory() as session:
         result = await session.execute(
-            select(Order).where(Order.user_id == user_id, Order.plan == plan)
+            select(Order.id).where(Order.user_id == user_id, Order.plan == plan).limit(1)
         )
         return result.scalar_one_or_none() is not None
+
+
+async def can_claim_test(user_id: int) -> bool:
+    async with async_session_factory() as session:
+        user = await session.get(User, user_id)
+        if user is None or user.is_blocked:
+            return False
+        if await session.get(TrialClaim, user.telegram_id) is not None:
+            return False
+        has_history = await session.scalar(
+            select(Order.id).where(Order.user_id == user_id, Order.plan == "test").limit(1)
+        )
+        if has_history is not None:
+            return False
+        active = await session.scalar(
+            select(Subscription.id).where(
+                Subscription.user_id == user_id,
+                Subscription.expire_at > utcnow(),
+            ).limit(1)
+        )
+        return active is None
+
+
+async def claim_test_order(user_id: int, telegram_id: int) -> Order | None:
+    """Резервирует тест и заказ одной транзакцией ДО обращения к панели.
+
+    Уникальный Telegram ID в trial_claims защищает и от параллельных
+    запросов из разных процессов. Ошибка/таймаут панели не освобождает
+    резерв: VPN мог быть создан до потери ответа.
+    """
+    async with async_session_factory() as session:
+        async with session.begin():
+            user = await session.get(User, user_id)
+            if user is None or user.telegram_id != telegram_id or user.is_blocked:
+                return None
+            if await session.scalar(
+                select(Order.id).where(Order.user_id == user_id, Order.plan == "test").limit(1)
+            ) is not None:
+                return None
+            if await session.scalar(
+                select(Subscription.id).where(
+                    Subscription.user_id == user_id,
+                    Subscription.expire_at > utcnow(),
+                ).limit(1)
+            ) is not None:
+                return None
+
+            dialect = session.get_bind().dialect.name
+            if dialect == "postgresql":
+                insert = pg_insert
+            elif dialect == "sqlite":
+                insert = sqlite_insert
+            else:
+                raise RuntimeError(f"Unsupported trial database: {dialect}")
+            claimed = await session.scalar(
+                insert(TrialClaim)
+                .values(telegram_id=telegram_id, created_at=utcnow())
+                .on_conflict_do_nothing(index_elements=[TrialClaim.telegram_id])
+                .returning(TrialClaim.telegram_id)
+            )
+            if claimed is None:
+                return None
+
+            order = Order(
+                user_id=user_id, plan="test", amount=0,
+                currency="test", status="test_processing",
+            )
+            session.add(order)
+            await session.flush()
+        return order
 
 
 async def get_subscription(user_id: int) -> Subscription | None:

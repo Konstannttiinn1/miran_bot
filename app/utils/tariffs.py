@@ -12,12 +12,18 @@ from app.config import settings
 
 PLANS: dict[str, dict] = {
     "test": {"days": 1, "price_toman": 0, "traffic_gb": 1},
-    "10gb": {"days": 30, "price_toman": 70000, "traffic_gb": 10},
-    "20gb": {"days": 30, "price_toman": 140000, "traffic_gb": 20},
-    "30gb": {"days": 30, "price_toman": 210000, "traffic_gb": 30},
+    "10gb": {"days": 30, "price_toman": 39000, "traffic_gb": 10},
+    "15gb": {"days": 30, "price_toman": 49000, "traffic_gb": 15},
+    "20gb": {"days": 30, "price_toman": 59000, "traffic_gb": 20},
+    "25gb": {"days": 30, "price_toman": 69000, "traffic_gb": 25},
+    "30gb": {"days": 30, "price_toman": 79000, "traffic_gb": 30},
+    "50gb": {"days": 30, "price_toman": 119000, "traffic_gb": 50},
+    "100gb": {"days": 30, "price_toman": 199000, "traffic_gb": 100},
+}
+
+# Только для исполнения уже созданных заказов; в продажу не выводятся.
+RETIRED_PLANS: dict[str, dict] = {
     "40gb": {"days": 30, "price_toman": 265000, "traffic_gb": 40},
-    "50gb": {"days": 30, "price_toman": 320000, "traffic_gb": 50},
-    "100gb": {"days": 30, "price_toman": 600000, "traffic_gb": 100},
 }
 
 TEST_TARIFF = "test"
@@ -49,7 +55,9 @@ for _plan_key, _tariff in PLANS.items():
 
 
 def get_tariff(plan: str) -> dict:
-    return PLANS[plan]
+    if plan in PLANS:
+        return PLANS[plan]
+    return RETIRED_PLANS[plan]
 
 
 def get_rub_price(plan: str, rub_per_usd: float) -> int:

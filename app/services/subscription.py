@@ -9,14 +9,35 @@ from app.services.vpn_provider import (
     reset_subscription_link,
     subscription_link,
 )
-from app.utils.tariffs import PLANS
+from app.utils.tariffs import TEST_TARIFF, get_tariff
 
 log = logging.getLogger(__name__)
 
 
+class TrialUnavailableError(Exception):
+    """Тест уже использован/зарезервирован или есть активная подписка."""
+
+
 async def grant_vpn(user_id: int, telegram_id: int, plan: str) -> tuple[str, object]:
-    days = PLANS[plan]["days"]
-    traffic_gb = PLANS[plan]["traffic_gb"]
+    if plan != TEST_TARIFF:
+        return await _grant_vpn(user_id, telegram_id, plan)
+
+    order = await db_repo.claim_test_order(user_id, telegram_id)
+    if order is None:
+        raise TrialUnavailableError
+    try:
+        result = await _grant_vpn(user_id, telegram_id, plan)
+        await db_repo.update_order(order.id, status="paid")
+    except Exception:
+        await db_repo.update_order(order.id, status="failed")
+        raise
+    return result
+
+
+async def _grant_vpn(user_id: int, telegram_id: int, plan: str) -> tuple[str, object]:
+    tariff = get_tariff(plan)
+    days = tariff["days"]
+    traffic_gb = tariff["traffic_gb"]
     email = str(telegram_id)
 
     provider = get_vpn_provider()
