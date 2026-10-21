@@ -289,7 +289,7 @@ async def create_managed(panel, monkeypatch):
     await db_repo.set_user_role(owner.telegram_id, "dealer")
     await db_repo.change_dealer_balance(owner.id, 10)
     owner = await db_repo.get_user_by_id(owner.id)
-    status, sub = await db_repo.reserve_dealer_subscription_purchase(owner.id, "month2", 1)
+    status, sub = await db_repo.reserve_dealer_subscription_purchase(owner.id, "month2", 0.95)
     assert status == "reserved"
     await monthly_traffic.grant_monthly(panel[0], sub.xui_email, 60)
     await db_repo.complete_dealer_subscription_purchase(sub.id, owner.id, utcnow() + timedelta(days=60), 100)
@@ -314,7 +314,7 @@ async def test_managed_topup_confirmation_debits_and_credits_once(database, pane
     cb = callback(f"dealer:trafficconfirm:{intent.id}:0")
     for _ in range(2):
         await dealer.dealer_traffic_confirm(cb, lambda key, **kw: key, "en", owner)
-    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == 8.75
+    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == pytest.approx(8.80)
     assert (await db_repo.get_order(intent.id)).status == "paid"
     updated = await db_repo.get_dealer_subscription(owner.id, sub.id)
     assert updated.traffic_limit_gb == 150 and updated.expire_at == expiry
@@ -353,7 +353,7 @@ async def test_unknown_credit_outcome_stays_reserved_and_cannot_be_replayed(data
         await dealer.dealer_traffic_confirm(cb, lambda key, **kw: key, "en", owner)
     assert credit.await_count == 1
     assert (await db_repo.get_order(intent.id)).status == "dealer_processing"
-    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == 8.75
+    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == pytest.approx(8.80)
 
 
 @pytest.mark.asyncio
@@ -465,7 +465,7 @@ async def test_managed_purchase_and_renewal_use_duration_prices_and_keep_bonus(d
     assert count == 1
     sub = items[0]
     assert sub.plan == "month3" and sub.traffic_limit_gb == 100
-    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == 8.5
+    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == pytest.approx(8.645)
     await panel[0].add_traffic(sub.xui_email, 50)
     remote = panel[1][sub.xui_email]
     remote["usedTrafficBytes"] = 120 * GB
@@ -476,4 +476,4 @@ async def test_managed_purchase_and_renewal_use_duration_prices_and_keep_bonus(d
     assert renewed.expire_at == sub.expire_at + timedelta(days=60)
     assert renewed.traffic_limit_gb == 150 and renewed.plan == "month2"
     assert remote["usedTrafficBytes"] == 120 * GB
-    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == 7.5
+    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == pytest.approx(7.695)

@@ -9,7 +9,7 @@
   "buy_coming_soon": "🛒 Purchase will be available soon.",
   "active_subscription": "<b>ORION_VPN</b> 🌐\n✅ Your subscription is active.\n📅 Until: {expire_date}\n📊 Traffic: {traffic} GB",
   "support_msg": "🆘 Contact support:\n{support}",
-  "select_plan": "<b>ORION_VPN</b> 🌐\n📦 One plan: 100 GB every 30 days for $1.\nChoose 1, 2 or 3 months (30, 60 or 90 days).\n\nThe allowance resets every 30 days. Extra traffic lasts until the next reset.",
+  "select_plan": "<b>ORION_VPN</b> 🌐\n📦 One plan: 100 GB every 30 days. The first month costs $1.\nChoose 1, 2 or 3 months (30, 60 or 90 days).\nWhen you pay for the full term upfront, each next month costs 10% less than the previous month.\n\nThe allowance resets every 30 days. Extra traffic lasts until the next reset.",
   "plan_test": "🎁 Free test: 1 day, 1 GB",
   "test_activated": "🎁 Test subscription activated!",
   "test_unavailable": "The free test is available only once and cannot be activated while a subscription is active.",

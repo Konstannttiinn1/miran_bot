@@ -13,7 +13,7 @@ from app.services import subscription as subscription_service
 from app.utils.tariffs import PLANS, get_dealer_debit_usd, get_price_display, get_stars_price, get_usd_price
 
 
-EXPECTED_PRICES = {"month1": 1, "month2": 2, "month3": 3}
+EXPECTED_PRICES = {"month1": 1, "month2": 1.90, "month3": 2.71}
 
 
 def test_exact_price_list_and_derived_payment_amounts(monkeypatch):
@@ -30,7 +30,8 @@ def test_exact_price_list_and_derived_payment_amounts(monkeypatch):
         assert get_usd_price("month1") == 1
         assert get_usd_price("traffic50") == 0.5
     assert get_price_display("month1", "ru") == "$1"
-    assert get_price_display("month2", "fa") == "$2"
+    assert get_price_display("month2", "fa") == "$1.90"
+    assert get_price_display("month3", "en") == "$2.71"
     assert PLANS["test"]["price_toman"] == 0
 
 

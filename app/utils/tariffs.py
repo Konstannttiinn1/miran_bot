@@ -5,14 +5,15 @@ from app.config import settings
 TEST_TARIFF = "test"
 DEFAULT_PLAN = "month1"
 TRAFFIC_TOPUP = "traffic50"
+# Prepaid terms: $1 + $0.90 + $0.81; each next month costs 10% less.
 PLANS: dict[str, dict] = {
     "test": {"days": 1, "price_usd": 0, "price_toman": 0, "traffic_gb": 1},
     **{
         f"month{months}": {
-            "months": months, "days": months * 30, "price_usd": float(months),
+            "months": months, "days": months * 30, "price_usd": price_usd,
             "traffic_gb": 100, "monthly": True,
         }
-        for months in (1, 2, 3)
+        for months, price_usd in ((1, 1.0), (2, 1.90), (3, 2.71))
     },
 }
 TRAFFIC_PACKAGES = {
