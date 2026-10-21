@@ -12,11 +12,16 @@ from app.keyboards.builders import back_kb, dealer_confirm_kb, payment_kb, plans
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services import heleket
-from app.services.subscription import grant_vpn
-from app.utils.emojis import apply_emoji
+from app.services.vpn_provider import provider_name
+from app.services.subscription import TrialUnavailableError, can_buy_traffic, grant_vpn
+from app.utils.emojis import apply_emoji, strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
 from app.utils.notifications import notify_admins
-from app.utils.tariffs import PLANS, get_dealer_debit_usd, get_stars_price
+from app.utils.tariffs import (
+    RETIRED_PLANS, TRAFFIC_TOPUP,
+    get_dealer_debit_usd, get_stars_price, get_tariff, get_toman_price, get_usd_price,
+    is_sale_product,
+)
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -30,13 +35,20 @@ def _format_toman(amount: int | float, lang: str) -> str:
     text = f"{int(amount):,}"
     if lang == "fa":
         text = text.translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")).replace(",", "،")
-        return f"{text} تومان"
-    return f"{text} Toman"
+    return get_text(lang, "currency_toman", amount=text)
 
 
 def _format_usd(amount: int | float) -> str:
     text = f"{float(amount):.3f}".rstrip("0").rstrip(".")
     return f"${text}"
+
+
+def _product_label(plan: str, lang: str) -> str:
+    tariff = get_tariff(plan)
+    if plan == TRAFFIC_TOPUP:
+        return get_text(lang, "traffic_invoice_title")
+    key = "monthly_product" if tariff.get("monthly") else "legacy_product"
+    return get_text(lang, key, traffic=tariff["traffic_gb"], days=tariff["days"])
 
 
 def _stars_payload(order_id: int, user_id: int, plan: str) -> str:
@@ -65,22 +77,27 @@ def _payment_error(lang: str, activation: bool = False) -> str:
     }.get(lang, "The order or payment amount is invalid. Please try again.")
 
 
-def _invoice_copy(lang: str, traffic: int, stars: int) -> tuple[str, str, str]:
+def _invoice_copy(lang: str, plan: str, stars: int) -> tuple[str, str, str]:
+    tariff = get_tariff(plan)
+    traffic, days = int(tariff["traffic_gb"]), int(tariff["days"])
+    if plan == TRAFFIC_TOPUP:
+        title = get_text(lang, "traffic_invoice_title")
+        return title, get_text(lang, "traffic_invoice_description"), f"50 GB · {stars} Stars"
     if lang == "fa":
         return (
             f"ORION_VPN · {traffic} GB",
-            f"اشتراک ۳۰ روزه VPN با {traffic} گیگابایت ترافیک",
+            f"اشتراک {days} روزه VPN با {traffic} گیگابایت ترافیک در ماه",
             f"{traffic} GB · {stars} Stars",
         )
     if lang == "ru":
         return (
             f"ORION_VPN · {traffic} ГБ",
-            f"VPN на 30 дней, пакет {traffic} ГБ",
+            f"VPN на {days} дней, {traffic} ГБ каждые 30 дней",
             f"{traffic} ГБ · {stars} Stars",
         )
     return (
         f"ORION_VPN · {traffic} GB",
-        f"30-day VPN plan with {traffic} GB of traffic",
+        f"{days}-day VPN plan with {traffic} GB every 30 days",
         f"{traffic} GB · {stars} Stars",
     )
 
@@ -88,38 +105,49 @@ def _invoice_copy(lang: str, traffic: int, stars: int) -> tuple[str, str, str]:
 @router.callback_query(F.data.startswith("plan:"))
 async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     plan = callback.data.split(":")[1]
-    if plan not in PLANS:
+    if not is_sale_product(plan):
         await callback.answer("❌", show_alert=True)
         return
 
     if plan == "test":
         await state.clear()
-        order = await db_repo.create_order(db_user.id, "test", 0, "test")
+        # Не держим callback открытым, пока панель отвечает (до 30 секунд).
+        await callback.answer()
         try:
             link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, "test")
+        except TrialUnavailableError:
+            await callback.message.answer(t("test_unavailable"))
+            return
         except Exception:
             log.exception("test grant failed")
-            await db_repo.update_order(order.id, status="failed")
-            await callback.message.answer(t("payment_error"))
+            await callback.message.answer(t("test_activation_failed"))
             return
-        await db_repo.update_order(order.id, status="paid")
-        await callback.answer()
         await callback.message.answer(
             t("test_activated") + "\n" +
             apply_emoji(f"🔗 {h(link)}", settings.use_custom_emoji)
         )
         return
 
+    if plan == TRAFFIC_TOPUP and not await can_buy_traffic(db_user.id):
+        await callback.answer(strip_custom_emoji_tags(t("traffic_requires_subscription")), show_alert=True)
+        return
     await state.update_data(plan=plan)
     await state.set_state(Purchase.choosing_payment)
     await callback.answer()
-    await send_with_logo(callback, t("select_payment"), reply_markup=payment_kb(t))
+    text = t("select_payment")
+    if plan == TRAFFIC_TOPUP:
+        text = t("traffic_topup_intro") + "\n\n" + text
+    await send_with_logo(callback, text, reply_markup=payment_kb(t))
 
 
 @router.callback_query(F.data == "back:plans")
 async def back_to_plans(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     data = await state.get_data()
-    with_test = bool(data.get("plans_with_test", False))
+    with_test = (
+        bool(data.get("plans_with_test", False))
+        and await db_repo.can_claim_test(db_user.id)
+    )
+    await state.update_data(plans_with_test=with_test)
     await state.set_state(Purchase.choosing_plan)
     await callback.answer()
     await send_with_logo(
@@ -133,20 +161,28 @@ async def back_to_plans(callback: types.CallbackQuery, t, lang, db_user, state: 
 async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     method = callback.data.split(":")[1]
     data = await state.get_data()
-    plan = data.get("plan", "30gb")
+    plan = data.get("plan", "")
     await callback.answer()
 
-    if plan not in PLANS or plan == "test":
+    if not is_sale_product(plan) or plan == "test":
         await state.clear()
         await send_with_logo(callback, t("payment_error"))
+        return
+
+    if plan == TRAFFIC_TOPUP and not await can_buy_traffic(db_user.id):
+        await state.clear()
+        await send_with_logo(callback, t("traffic_requires_subscription"))
+        return
+    order_type = "traffic_topup" if plan == TRAFFIC_TOPUP else "purchase"
+    if get_tariff(plan).get("monthly") and provider_name() != "remnawave":
+        await send_with_logo(callback, t("sales_unavailable"))
         return
 
     if method == "stars":
         await state.clear()
         stars = get_stars_price(plan, settings.stars_reward_usd)
-        order = await db_repo.create_order(db_user.id, plan, stars, "xtr")
-        traffic = int(PLANS[plan]["traffic_gb"])
-        title, description, label = _invoice_copy(lang, traffic, stars)
+        order = await db_repo.create_order(db_user.id, plan, stars, "xtr", order_type=order_type)
+        title, description, label = _invoice_copy(lang, plan, stars)
         try:
             await callback.message.answer_invoice(
                 title=title,
@@ -162,14 +198,14 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
         return
 
     if method == "dealer":
-        retail_toman = int(PLANS[plan]["price_toman"])
+        retail_toman = get_toman_price(plan)
         dealer_usd = get_dealer_debit_usd(
             plan,
             settings.toman_per_usd,
             settings.dealer_discount,
         )
         # order.amount для дилерского заказа всегда хранится в USD.
-        order = await db_repo.create_order(db_user.id, plan, dealer_usd, "usd")
+        order = await db_repo.create_order(db_user.id, plan, dealer_usd, "usd", order_type=order_type)
         await state.update_data(plan=plan, order_id=order.id)
         await state.set_state(Purchase.waiting_receipt)
         await send_with_logo(
@@ -184,8 +220,6 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
         )
         return
 
-    await state.clear()
-
     if method == "heleket":
         if not settings.heleket_enabled or not heleket.is_configured():
             await send_with_logo(
@@ -194,8 +228,9 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
                 reply_markup=payment_kb(t),
             )
             return
-        price_usd = PLANS[plan]["price_usd"]
-        order = await db_repo.create_order(db_user.id, plan, price_usd, "usdt")
+        await state.clear()
+        price_usd = get_usd_price(plan)
+        order = await db_repo.create_order(db_user.id, plan, price_usd, "usdt", order_type=order_type)
         try:
             invoice = await heleket.create_invoice(price_usd, order.id)
         except Exception:
@@ -227,18 +262,24 @@ async def stars_pre_checkout(query: types.PreCheckoutQuery, t, lang, db_user):
 
     order_id, payload_user_id, plan = parsed
     order = await db_repo.get_order(order_id)
-    expected = get_stars_price(plan, settings.stars_reward_usd) if plan in PLANS else -1
+    # Сумма зафиксирована в заказе: обновление прайса не ломает старый invoice.
+    expected = int(round(float(order.amount))) if order is not None else -1
     valid = (
         order is not None
         and order.user_id == db_user.id
         and payload_user_id == db_user.id
         and order.plan == plan
+        and plan != "test"
+        and (is_sale_product(plan) or plan in RETIRED_PLANS)
+        and expected > 0
+        and float(order.amount) == expected
         and order.currency.lower() == "xtr"
         and order.status == "pending"
         and query.currency == "XTR"
         and int(query.total_amount) == expected
-        and int(round(float(order.amount))) == expected
     )
+    if valid and plan == TRAFFIC_TOPUP:
+        valid = await can_buy_traffic(db_user.id)
     await query.answer(ok=valid, error_message=None if valid else _payment_error(lang))
 
 
@@ -255,15 +296,18 @@ async def stars_successful_payment(message: types.Message, t, lang, db_user):
 
     order_id, payload_user_id, plan = parsed
     order = await db_repo.get_order(order_id)
-    expected = get_stars_price(plan, settings.stars_reward_usd) if plan in PLANS else -1
+    expected = int(round(float(order.amount))) if order is not None else -1
     valid = (
         order is not None
         and order.user_id == db_user.id
         and payload_user_id == db_user.id
         and order.plan == plan
+        and plan != "test"
+        and (is_sale_product(plan) or plan in RETIRED_PLANS)
+        and expected > 0
+        and float(order.amount) == expected
         and order.currency.lower() == "xtr"
         and int(payment.total_amount) == expected
-        and int(round(float(order.amount))) == expected
     )
     if not valid:
         await notify_admins(
@@ -275,12 +319,13 @@ async def stars_successful_payment(message: types.Message, t, lang, db_user):
 
     if order.status == "paid":
         return
-    if order.status not in {"pending", "stars_paid_grant_failed"}:
+    if order.status != "pending":
         log.warning("Stars order %s ignored in status %s", order.id, order.status)
         return
 
     charge_id = payment.telegram_payment_charge_id
-    await db_repo.update_order(order.id, status="stars_paid_processing", external_id=charge_id)
+    if not await db_repo.claim_payment_order(order.id, "stars_paid_processing", charge_id):
+        return
     try:
         link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, plan)
     except Exception:
@@ -295,7 +340,8 @@ async def stars_successful_payment(message: types.Message, t, lang, db_user):
 
     await db_repo.update_order(order.id, status="paid")
     await message.answer(
-        t("payment_success", link=h(link), expire_date=expire_at.strftime("%d.%m.%Y"))
+        t("traffic_payment_success" if plan == TRAFFIC_TOPUP else "payment_success",
+          link=h(link), expire_date=expire_at.strftime("%d.%m.%Y"))
     )
     await notify_admins(
         f"⭐ Stars-оплата заказа #{order.id} ({plan}) — "
@@ -307,22 +353,34 @@ async def stars_successful_payment(message: types.Message, t, lang, db_user):
 async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMContext):
     data = await state.get_data()
     order_id = data.get("order_id")
-    plan = data.get("plan", "30gb")
     await state.clear()
+    order = await db_repo.get_order(order_id) if order_id is not None else None
+    if (
+        order is None or order.user_id != db_user.id
+        or order.currency.lower() != "usd" or order.status != "pending"
+        or order.plan == "test"
+        or (not is_sale_product(order.plan) and order.plan not in RETIRED_PLANS)
+    ):
+        await message.answer(t("payment_error"))
+        return
+    plan = order.plan
 
     photo = message.photo[-1].file_id
     await db_repo.update_order(order_id, receipt_photo_id=photo, status="pending_dealer")
     await message.answer(t("receipt_received"))
 
+    client_price = get_toman_price(plan)
+    dealer_price_usd = float(order.amount)
+    # Старый заказ может иметь цену до обновления прайса. Не подменяем
+    # указанную клиенту сумму новой розницей в уведомлении дилеру.
+    current_debit = round(
+        client_price / settings.toman_per_usd * settings.dealer_discount, 3,
+    )
+    current_price = abs(current_debit - dealer_price_usd) < 1e-9
+
     dealers = await db_repo.list_dealers()
     for d in dealers:
         try:
-            client_price = int(PLANS[plan]["price_toman"])
-            dealer_price_usd = get_dealer_debit_usd(
-                plan,
-                settings.toman_per_usd,
-                settings.dealer_discount,
-            )
             await bot.send_photo(
                 d.telegram_id,
                 photo,
@@ -331,8 +389,11 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
                     "dealer_new_order",
                     order_id=order_id,
                     username=db_user.username or db_user.telegram_id,
-                    plan=plan,
-                    client_amount=_format_toman(client_price, d.lang),
+                    plan=_product_label(plan, d.lang),
+                    client_amount=(
+                        _format_toman(client_price, d.lang)
+                        if current_price else get_text(d.lang, "dealer_original_amount")
+                    ),
                     dealer_amount=_format_usd(dealer_price_usd),
                 ),
                 reply_markup=dealer_confirm_kb(order_id),

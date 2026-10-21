@@ -14,6 +14,7 @@ from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
 from app.services.vpn_provider import subscription_link
+from app.utils.tariffs import DEFAULT_PLAN
 from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
 
@@ -60,7 +61,7 @@ async def test_vpn(message: types.Message, t, lang, db_user):
     if message.from_user.id not in settings.admin_list:
         return
     try:
-        link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, "30gb")
+        link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, DEFAULT_PLAN)
         await message.answer(f"🔧 TEST VPN выдан:\n{link}\n📅 до {expire_at.strftime('%d.%m.%Y')}")
     except Exception as e:
         await message.answer(f"❌ Ошибка 3x-UI:\n{type(e).__name__}: {e}")
@@ -137,6 +138,9 @@ async def topup(message: types.Message, t, lang, db_user):
 @router.callback_query(F.data.startswith("set_lang:"))
 async def set_lang(callback: types.CallbackQuery, t, lang, db_user):
     new_lang = callback.data.split(":")[1]
+    if new_lang not in {"fa", "en", "ru"} or new_lang not in settings.langs_list:
+        await callback.answer(strip_custom_emoji_tags(t("language_invalid")), show_alert=True)
+        return
     await db_repo.set_user_lang(callback.from_user.id, new_lang)
 
     nt = lambda key, **kw: get_text(new_lang, key, **kw)
@@ -171,8 +175,7 @@ async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMCont
     now = utcnow()
 
     if sub is None or sub.expire_at <= now:
-        used_test = await db_repo.user_has_order(db_user.id, "test")
-        with_test = not used_test
+        with_test = await db_repo.can_claim_test(db_user.id)
         await state.set_state(Purchase.choosing_plan)
         await state.update_data(plans_with_test=with_test)
         screen_text = t("select_plan")

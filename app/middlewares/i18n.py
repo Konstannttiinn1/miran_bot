@@ -53,6 +53,8 @@ class I18nMiddleware(BaseMiddleware):
             return
 
         lang = "ru" if tg_user.id in settings.admin_list else (user.lang or "fa")
+        if lang not in _translations:
+            lang = "fa"
 
         data["db_user"] = user
         data["lang"] = lang

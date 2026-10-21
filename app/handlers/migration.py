@@ -8,6 +8,7 @@ from app.middlewares.i18n import I18nMiddleware
 from app.repositories import db_repo
 from app.services.vpn_provider import subscription_link
 from app.services.xui_api import XuiClient
+from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_with_logo
 
 router = Router()
@@ -55,11 +56,11 @@ async def _send_key(
         )
         return
 
-    title = "↩️ <b>کلید قدیمی</b>" if old else "🆕 <b>کلید جدید</b>"
+    title = t("migration_key_old" if old else "migration_key_new")
     await send_with_logo(
         callback,
         f"{title}\n\n<code>{h(link)}</code>\n\n"
-        "این لینک را در برنامه VPN اضافه کنید و با کسی به اشتراک نگذارید.",
+        + t("migration_link_hint"),
         reply_markup=back_kb(t, back_callback),
     )
 
@@ -68,7 +69,7 @@ async def _send_key(
 async def migration_client_key(callback: types.CallbackQuery, t, lang, db_user):
     sub = await db_repo.get_subscription(db_user.id)
     if sub is None:
-        await callback.answer("Subscription not found", show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("subscription_not_found")), show_alert=True)
         return
 
     await _send_key(
@@ -85,7 +86,7 @@ async def migration_client_key(callback: types.CallbackQuery, t, lang, db_user):
 )
 async def migration_dealer_keys(callback: types.CallbackQuery, t, lang, db_user):
     if db_user.role != "dealer":
-        await callback.answer("Dealer access only", show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_access_only")), show_alert=True)
         return
 
     old = callback.data == "migration:dealer:old"
@@ -95,12 +96,11 @@ async def migration_dealer_keys(callback: types.CallbackQuery, t, lang, db_user)
         per_page=100,
     )
     if not items:
-        await callback.answer("No dealer subscriptions", show_alert=True)
+        await callback.answer(strip_custom_emoji_tags(t("dealer_no_subscriptions")), show_alert=True)
         return
 
     lines = [
-        "↩️ <b>کلیدهای قدیمی شما</b>" if old
-        else "🆕 <b>کلیدهای جدید شما</b>",
+        t("migration_keys_old" if old else "migration_keys_new"),
         "",
     ]
     for sub in items:
@@ -115,7 +115,7 @@ async def migration_dealer_keys(callback: types.CallbackQuery, t, lang, db_user)
         if not link:
             continue
 
-        name = sub.client_name or f"اشتراک #{sub.id}"
+        name = sub.client_name or t("subscription_name", id=sub.id)
         lines.append(f"📦 <b>{h(name)}</b>\n<code>{h(link)}</code>")
 
     if len(lines) == 2:

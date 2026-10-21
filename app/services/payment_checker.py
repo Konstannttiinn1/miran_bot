@@ -9,6 +9,7 @@ from app.repositories import db_repo
 from app.services import heleket
 from app.services.subscription import grant_vpn
 from app.utils.notifications import notify_admins
+from app.utils.tariffs import TRAFFIC_TOPUP
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +39,8 @@ async def check_pending_payments() -> None:
             continue
 
         # Сначала фиксируем, что деньги подтверждены, но VPN ещё не выдан.
-        await db_repo.update_order(order.id, status="crypto_paid_processing")
+        if not await db_repo.claim_payment_order(order.id, "crypto_paid_processing"):
+            continue
         try:
             link, expire_at = await grant_vpn(user.id, user.telegram_id, order.plan)
         except Exception:
@@ -54,7 +56,7 @@ async def check_pending_payments() -> None:
             user.telegram_id,
             get_text(
                 user.lang,
-                "payment_success",
+                "traffic_payment_success" if order.plan == TRAFFIC_TOPUP else "payment_success",
                 link=h(link),
                 expire_date=expire_at.strftime("%d.%m.%Y"),
             ),

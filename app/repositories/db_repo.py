@@ -2,11 +2,23 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.database.engine import async_session_factory
-from app.database.models import DealerLog, DealerSubscription, Order, Subscription, User
-
+from app.database.models import (
+    DealerLog,
+    DealerSubscription,
+    DealerTest,
+    Order,
+    PromoCode,
+    PromoRedemption,
+    Subscription,
+    TrialClaim,
+    User,
+    utcnow,
+)
 
 async def get_or_create_user(telegram_id: int, username: str | None = None) -> User:
     async with async_session_factory() as session:
@@ -83,9 +95,26 @@ async def delete_user_full(telegram_id: int) -> None:
         if user is None:
             return
         uid = user.id
+        promo_ids = [
+            value for value in (
+                await session.execute(
+                    select(PromoCode.id).where(PromoCode.dealer_id == uid)
+                )
+            ).scalars().all()
+        ]
+        redemptions = await session.execute(
+            select(PromoRedemption).where(
+                (PromoRedemption.user_id == uid)
+                | (PromoRedemption.promo_id.in_(promo_ids))
+            )
+        )
+        for redemption in redemptions.scalars().all():
+            await session.delete(redemption)
         for model, column in ((Subscription, Subscription.user_id),
                               (Order, Order.user_id),
                               (DealerSubscription, DealerSubscription.dealer_id),
+                              (DealerTest, DealerTest.dealer_id),
+                              (PromoCode, PromoCode.dealer_id),
                               (DealerLog, DealerLog.dealer_id)):
             rows = await session.execute(select(model).where(column == uid))
             for row in rows.scalars().all():
@@ -119,6 +148,8 @@ async def claim_dealer_order(order_id: int, dealer_id: int) -> tuple[str, Order 
             ).scalar_one_or_none()
             if order is None or order.status != "pending_dealer":
                 return "processed", order
+            if order.order_type.startswith("managed_traffic:") and order.user_id != dealer_id:
+                return "not_dealer", order
 
             dealer = (
                 await session.execute(
@@ -131,6 +162,13 @@ async def claim_dealer_order(order_id: int, dealer_id: int) -> tuple[str, Order 
             price = float(order.amount)
             if float(dealer.dealer_balance) < price:
                 return "insufficient", order
+
+            claimed = await session.execute(
+                update(Order).where(Order.id == order_id, Order.status == "pending_dealer")
+                .values(status="dealer_processing").execution_options(synchronize_session=False)
+            )
+            if claimed.rowcount != 1:
+                return "processed", order
 
             dealer.dealer_balance = float(dealer.dealer_balance) - price
             order.status = "dealer_processing"
@@ -596,7 +634,7 @@ async def complete_dealer_subscription_renewal(
     log_id: int,
     plan: str,
     expire_at: datetime,
-    traffic_gb: int,
+    traffic_gb: int | None,
 ) -> bool:
     async with async_session_factory() as session:
         async with session.begin():
@@ -624,10 +662,19 @@ async def complete_dealer_subscription_renewal(
                 return False
             sub.plan = plan
             sub.expire_at = expire_at
-            sub.traffic_limit_gb = traffic_gb
+            if traffic_gb is not None:
+                sub.traffic_limit_gb = traffic_gb
             sub.status = "active"
             entry.action = "dealer_sub_renew"
             return True
+
+
+async def set_dealer_subscription_traffic(dealer_id: int, sub_id: int, traffic_gb: int) -> None:
+    async with async_session_factory() as session:
+        await session.execute(update(DealerSubscription).where(
+            DealerSubscription.id == sub_id, DealerSubscription.dealer_id == dealer_id,
+        ).values(traffic_limit_gb=traffic_gb))
+        await session.commit()
 
 
 async def rollback_dealer_subscription_renewal(
@@ -719,9 +766,79 @@ async def list_users_page(page: int, per_page: int = 10) -> list[User]:
 async def user_has_order(user_id: int, plan: str) -> bool:
     async with async_session_factory() as session:
         result = await session.execute(
-            select(Order).where(Order.user_id == user_id, Order.plan == plan)
+            select(Order.id).where(Order.user_id == user_id, Order.plan == plan).limit(1)
         )
         return result.scalar_one_or_none() is not None
+
+
+async def can_claim_test(user_id: int) -> bool:
+    async with async_session_factory() as session:
+        user = await session.get(User, user_id)
+        if user is None or user.is_blocked:
+            return False
+        if await session.get(TrialClaim, user.telegram_id) is not None:
+            return False
+        has_history = await session.scalar(
+            select(Order.id).where(Order.user_id == user_id, Order.plan == "test").limit(1)
+        )
+        if has_history is not None:
+            return False
+        active = await session.scalar(
+            select(Subscription.id).where(
+                Subscription.user_id == user_id,
+                Subscription.expire_at > utcnow(),
+            ).limit(1)
+        )
+        return active is None
+
+
+async def claim_test_order(user_id: int, telegram_id: int) -> Order | None:
+    """Резервирует тест и заказ одной транзакцией ДО обращения к панели.
+
+    Уникальный Telegram ID в trial_claims защищает и от параллельных
+    запросов из разных процессов. Ошибка/таймаут панели не освобождает
+    резерв: VPN мог быть создан до потери ответа.
+    """
+    async with async_session_factory() as session:
+        async with session.begin():
+            user = await session.get(User, user_id)
+            if user is None or user.telegram_id != telegram_id or user.is_blocked:
+                return None
+            if await session.scalar(
+                select(Order.id).where(Order.user_id == user_id, Order.plan == "test").limit(1)
+            ) is not None:
+                return None
+            if await session.scalar(
+                select(Subscription.id).where(
+                    Subscription.user_id == user_id,
+                    Subscription.expire_at > utcnow(),
+                ).limit(1)
+            ) is not None:
+                return None
+
+            dialect = session.get_bind().dialect.name
+            if dialect == "postgresql":
+                insert = pg_insert
+            elif dialect == "sqlite":
+                insert = sqlite_insert
+            else:
+                raise RuntimeError(f"Unsupported trial database: {dialect}")
+            claimed = await session.scalar(
+                insert(TrialClaim)
+                .values(telegram_id=telegram_id, created_at=utcnow())
+                .on_conflict_do_nothing(index_elements=[TrialClaim.telegram_id])
+                .returning(TrialClaim.telegram_id)
+            )
+            if claimed is None:
+                return None
+
+            order = Order(
+                user_id=user_id, plan="test", amount=0,
+                currency="test", status="test_processing",
+            )
+            session.add(order)
+            await session.flush()
+        return order
 
 
 async def get_subscription(user_id: int) -> Subscription | None:
@@ -736,24 +853,26 @@ async def get_subscription(user_id: int) -> Subscription | None:
 get_subscription_by_user_id = get_subscription
 
 
-async def upsert_subscription(user_id: int, xui_email: str, expire_at, traffic_limit_gb: int = 0) -> Subscription:
+async def upsert_subscription(
+    user_id: int, xui_email: str, expire_at,
+    traffic_limit_gb: int | None = 0, *, only_extend: bool = False,
+) -> Subscription:
+    """Atomic insert/update; paid concurrent grants cannot shorten validity."""
     async with async_session_factory() as session:
-        result = await session.execute(
-            select(Subscription).where(Subscription.user_id == user_id)
-        )
-        sub = result.scalar_one_or_none()
-        if sub is None:
-            sub = Subscription(user_id=user_id, xui_email=xui_email, expire_at=expire_at,
-                               traffic_limit_gb=traffic_limit_gb)
-            session.add(sub)
-        else:
-            if expire_at > sub.expire_at:
-                sub.notified_3d = False
-                sub.notified_1d = False
-            sub.expire_at = expire_at
-            sub.traffic_limit_gb = traffic_limit_gb
+        dialect = session.get_bind().dialect.name
+        insert = pg_insert if dialect == "postgresql" else sqlite_insert
+        later = expire_at > Subscription.expire_at
+        statement = insert(Subscription).values(
+            user_id=user_id, xui_email=xui_email, expire_at=expire_at,
+            traffic_limit_gb=traffic_limit_gb or 0,
+        ).on_conflict_do_update(index_elements=[Subscription.user_id], set_={
+            "expire_at": case((later, expire_at), else_=Subscription.expire_at) if only_extend else expire_at,
+            "traffic_limit_gb": traffic_limit_gb if traffic_limit_gb is not None else Subscription.traffic_limit_gb,
+            "notified_3d": case((later, False), else_=Subscription.notified_3d),
+            "notified_1d": case((later, False), else_=Subscription.notified_1d),
+        }).returning(Subscription)
+        sub = (await session.execute(statement)).scalar_one()
         await session.commit()
-        await session.refresh(sub)
         return sub
 
 
@@ -782,6 +901,19 @@ async def create_order(user_id: int, plan: str, amount: float, currency: str, or
 async def get_order(order_id: int) -> Order | None:
     async with async_session_factory() as session:
         return await session.get(Order, order_id)
+
+
+async def claim_payment_order(order_id: int, status: str, external_id: str | None = None) -> bool:
+    """A payment is fulfilled once even with duplicate events or two workers."""
+    values = {"status": status}
+    if external_id is not None:
+        values["external_id"] = external_id
+    async with async_session_factory() as session:
+        result = await session.execute(
+            update(Order).where(Order.id == order_id, Order.status == "pending").values(**values)
+        )
+        await session.commit()
+        return result.rowcount == 1
 
 
 async def update_order(order_id: int, **fields) -> None:

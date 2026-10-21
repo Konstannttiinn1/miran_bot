@@ -51,7 +51,7 @@ class RemnawaveClient:
         ) as http:
             response = await http.request(method, path, **kwargs)
 
-        if response.status_code == 404:
+        if response.status_code == 404 and method.upper() == "GET":
             return {}
         if response.status_code >= 400:
             raise RemnawaveApiError(
@@ -221,11 +221,13 @@ class RemnawaveClient:
             raise RemnawaveApiError(f"Remnawave user {email} not found")
 
         if days > 0:
-            await self._request(
+            updated = await self._request(
                 "POST",
                 f"/api/users/{self._user_id(user)}/actions/extend",
                 json={"days": days},
             )
+            from app.services.monthly_traffic import sync_expiry
+            await sync_expiry(email, updated)
             return
 
         raw_expire_at = str(user.get("expireAt") or "").replace("Z", "+00:00")
@@ -254,9 +256,14 @@ class RemnawaveClient:
             },
         )
 
-    async def add_traffic(self, email: str, extra_gb: int) -> None:
+    async def add_traffic(self, email: str, extra_gb: int) -> int | None:
         if extra_gb <= 0:
             raise ValueError("extra_gb must be positive")
+
+        from app.services.monthly_traffic import add_monthly_traffic
+        monthly_limit = await add_monthly_traffic(self, email, extra_gb)
+        if monthly_limit is not None:
+            return monthly_limit
 
         user = await self.get_client(email)
         if not user:
@@ -272,8 +279,10 @@ class RemnawaveClient:
             json={
                 "id": self._user_id(user),
                 "trafficLimitBytes": current + extra_gb * 1024 ** 3,
+                **({"status": "ACTIVE"} if user.get("status") == "LIMITED" else {}),
             },
         )
+        return (current + extra_gb * 1024 ** 3) // (1024 ** 3)
 
     async def set_enabled(self, email: str, enabled: bool) -> None:
         user = await self.get_client(email)

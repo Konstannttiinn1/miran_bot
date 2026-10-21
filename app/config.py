@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     heleket_enabled: bool = False
 
     # Курсы / Telegram Stars
-    # Розничная цена хранится в туманах, остальные валюты считаются от неё.
+    # Розничная цена новых тарифов в USD; туманы для перевода дилеру считаются по курсу.
     rub_per_usd: float = 90.0
     toman_per_usd: float = 235000.0
     stars_reward_usd: float = 0.013

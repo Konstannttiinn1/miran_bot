@@ -39,6 +39,27 @@ class Subscription(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class TrialClaim(Base):
+    """Одноразовый тест закреплён за Telegram ID, даже после удаления User."""
+
+    __tablename__ = "trial_claims"
+
+    telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class MonthlyTrafficQuota(Base):
+    """One-cycle bonuses for the monthly product; survives bot restarts."""
+
+    __tablename__ = "monthly_traffic_quotas"
+
+    email: Mapped[str] = mapped_column(String, primary_key=True)
+    initialized: Mapped[bool] = mapped_column(Boolean, default=False)
+    extra_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    last_reset_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
 class DealerSubscription(Base):
     """Отдельная VPN-подписка, купленная дилером для своего клиента."""
 
