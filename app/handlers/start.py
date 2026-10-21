@@ -14,6 +14,7 @@ from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
 from app.services.vpn_provider import subscription_link
+from app.utils.tariffs import DEFAULT_PLAN
 from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
 
@@ -60,7 +61,7 @@ async def test_vpn(message: types.Message, t, lang, db_user):
     if message.from_user.id not in settings.admin_list:
         return
     try:
-        link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, "30gb")
+        link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, DEFAULT_PLAN)
         await message.answer(f"🔧 TEST VPN выдан:\n{link}\n📅 до {expire_at.strftime('%d.%m.%Y')}")
     except Exception as e:
         await message.answer(f"❌ Ошибка 3x-UI:\n{type(e).__name__}: {e}")

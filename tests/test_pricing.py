@@ -13,22 +13,24 @@ from app.services import subscription as subscription_service
 from app.utils.tariffs import PLANS, get_dealer_debit_usd, get_price_display, get_stars_price, get_usd_price
 
 
-EXPECTED_PRICES = {
-    "10gb": 39000, "15gb": 49000, "20gb": 59000, "25gb": 69000,
-    "30gb": 79000, "50gb": 119000, "100gb": 199000,
-}
+EXPECTED_PRICES = {"month1": 1, "month2": 2, "month3": 3}
 
 
-def test_exact_price_list_and_derived_payment_amounts():
-    assert {key: value["price_toman"] for key, value in PLANS.items() if key != "test"} == EXPECTED_PRICES
-    for key, toman in EXPECTED_PRICES.items():
-        assert PLANS[key]["days"] == 30
-        assert PLANS[key]["traffic_gb"] == int(key[:-2])
-        assert get_usd_price(key) == pytest.approx(toman / settings.toman_per_usd)
-        assert PLANS[key]["price_usd"] == round(get_usd_price(key), 6)
-        assert get_stars_price(key, settings.stars_reward_usd) * settings.stars_reward_usd >= get_usd_price(key)
-        assert get_dealer_debit_usd(key, 235000, 0.5) == round(toman / 235000 * 0.5, 3)
-    assert get_price_display("10gb", "fa") == "۳۹،۰۰۰ تومان"
+def test_exact_price_list_and_derived_payment_amounts(monkeypatch):
+    assert {key: value["price_usd"] for key, value in PLANS.items() if key != "test"} == EXPECTED_PRICES
+    for key, usd in EXPECTED_PRICES.items():
+        assert PLANS[key]["days"] == int(key[-1]) * 30
+        assert PLANS[key]["traffic_gb"] == 100
+        assert PLANS[key]["monthly"] is True
+        assert get_usd_price(key) == usd
+        assert get_stars_price(key, settings.stars_reward_usd) * settings.stars_reward_usd >= usd
+        assert get_dealer_debit_usd(key, 235000, 0.5) == usd * 0.5
+    for rate in (100000, 235000, 500000):
+        monkeypatch.setattr(settings, "toman_per_usd", rate)
+        assert get_usd_price("month1") == 1
+        assert get_usd_price("traffic50") == 0.5
+    assert get_price_display("month1", "ru") == "$1"
+    assert get_price_display("month2", "fa") == "$2"
     assert PLANS["test"]["price_toman"] == 0
 
 
@@ -41,7 +43,7 @@ def test_all_sales_menus_have_new_plans_and_no_retired_plan():
         callbacks = {b.callback_data for row in kb.inline_keyboard for b in row}
         for key in EXPECTED_PRICES:
             assert any(data.startswith(prefix + key) for data in callbacks)
-        assert not any("40gb" in data for data in callbacks)
+        assert not any("gb" in data or "traffic50" in data for data in callbacks)
 
 
 @pytest.mark.asyncio

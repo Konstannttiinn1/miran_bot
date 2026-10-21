@@ -84,17 +84,17 @@ def test_all_dealer_keyboards_use_the_selected_language(lang):
     t = translator(lang)
     keyboards = [
         builders.dealer_buy_plans_kb(t=t),
-        builders.dealer_buy_confirm_kb("10gb", t=t),
+        builders.dealer_buy_confirm_kb("month1", t=t),
         builders.dealer_subscriptions_kb([], 0, 1, t=t),
         builders.dealer_subscription_card_kb(7, 0, "https://example.test", t=t),
         builders.dealer_renew_plans_kb(7, 0, t=t),
-        builders.dealer_renew_confirm_kb(7, "10gb", 0, t=t),
+        builders.dealer_renew_confirm_kb(7, "month1", 0, t=t),
         builders.dealer_created_name_kb(7, "https://example.test", t=t),
         builders.dealer_search_results_kb([], t=t),
     ]
     for keyboard in keyboards:
         assert_language(keyboard_text(keyboard), lang)
-    assert "$0.083" in keyboard_text(keyboards[0])
+    assert "$0.500" in keyboard_text(keyboards[0])
 
 
 @pytest.mark.asyncio
@@ -102,7 +102,7 @@ def test_all_dealer_keyboards_use_the_selected_language(lang):
 @pytest.mark.parametrize("screen", ["buy", "buy_review", "list", "card", "search", "renew", "renew_review"])
 async def test_dealer_screens_render_in_the_selected_language(monkeypatch, lang, screen):
     user = SimpleNamespace(id=1, telegram_id=40001, role="dealer", dealer_balance=0)
-    callback = SimpleNamespace(data="dealer:buyplan:10gb", answer=AsyncMock())
+    callback = SimpleNamespace(data="dealer:buyplan:month1", answer=AsyncMock())
     state = SimpleNamespace(clear=AsyncMock(), set_state=AsyncMock())
     render = AsyncMock()
     monkeypatch.setattr(dealer, "send_with_logo", render)
@@ -125,7 +125,7 @@ async def test_dealer_screens_render_in_the_selected_language(monkeypatch, lang,
         callback.data = "dealer:renew:7:0"
         await dealer.dealer_subscription_renew(callback, t, lang, user)
     else:
-        callback.data = "dealer:renewplan:7:10gb:0"
+        callback.data = "dealer:renewplan:7:month1:0"
         await dealer.dealer_subscription_renew_plan(callback, t, lang, user)
     assert_language(render.call_args.args[1], lang)
     assert_language(keyboard_text(render.call_args.kwargs["reply_markup"]), lang)

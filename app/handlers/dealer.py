@@ -24,14 +24,18 @@ from app.keyboards.builders import (
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
+from app.services.monthly_traffic import grant_monthly, is_monthly, parse_time
 from app.services.vpn_provider import (
     create_test_client,
     get_vpn_provider,
+    provider_name,
     subscription_link,
 )
 from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_with_logo
-from app.utils.tariffs import PLANS, get_dealer_debit_usd
+from app.utils.tariffs import PLANS, TRAFFIC_TOPUP, get_dealer_debit_usd
+from app.keyboards.builders import raw_btn
+from aiogram.types import InlineKeyboardMarkup
 from app.utils.notifications import notify_admins
 
 log = logging.getLogger(__name__)
@@ -215,6 +219,10 @@ async def dealer_buy_confirm(callback: types.CallbackQuery, t, lang, db_user, st
         await callback.answer(strip_custom_emoji_tags(t("invalid_plan")), show_alert=True)
         return
 
+    if provider_name() != "remnawave":
+        await callback.answer(strip_custom_emoji_tags(t("sales_unavailable")), show_alert=True)
+        return
+
     price = _dealer_price(plan)
     status, sub = await db_repo.reserve_dealer_subscription_purchase(
         db_user.id, plan, price
@@ -229,13 +237,7 @@ async def dealer_buy_confirm(callback: types.CallbackQuery, t, lang, db_user, st
     await callback.answer("⏳")
     tariff = PLANS[plan]
     try:
-        await get_vpn_provider().add_client(
-            email=sub.xui_email,
-            days=int(tariff["days"]),
-            limit_ip=1,
-            traffic_gb=int(tariff["traffic_gb"]),
-        )
-        expire_at = utcnow() + timedelta(days=int(tariff["days"]))
+        expire_at = await grant_monthly(get_vpn_provider(), sub.xui_email, int(tariff["days"]))
         completed = await db_repo.complete_dealer_subscription_purchase(
             sub.id,
             db_user.id,
@@ -491,6 +493,10 @@ async def dealer_subscription_renew_confirm(callback: types.CallbackQuery, t, la
         await callback.answer(strip_custom_emoji_tags(t("invalid_plan")), show_alert=True)
         return
 
+    if provider_name() != "remnawave":
+        await callback.answer(strip_custom_emoji_tags(t("sales_unavailable")), show_alert=True)
+        return
+
     price = _dealer_price(plan)
     status, sub, log_id = await db_repo.reserve_dealer_subscription_renewal(
         db_user.id, sub_id, plan, price
@@ -512,21 +518,14 @@ async def dealer_subscription_renew_confirm(callback: types.CallbackQuery, t, la
         current = await provider.get_client(sub.xui_email)
         if current is None:
             raise RuntimeError("managed client not found in VPN provider")
-        await provider.add_client(
-            email=sub.xui_email,
-            days=int(tariff["days"]),
-            limit_ip=1,
-            traffic_gb=int(tariff["traffic_gb"]),
-        )
-        base = sub.expire_at if sub.expire_at and sub.expire_at > utcnow() else utcnow()
-        expire_at = base + timedelta(days=int(tariff["days"]))
+        expire_at = await grant_monthly(provider, sub.xui_email, int(tariff["days"]))
         ok = await db_repo.complete_dealer_subscription_renewal(
             db_user.id,
             sub.id,
             log_id,
             plan,
             expire_at,
-            int(tariff["traffic_gb"]),
+            None,  # Quota service maintains this field under its own row lock.
         )
         if not ok:
             raise RuntimeError("database renewal completion failed")
@@ -614,6 +613,10 @@ async def dealer_approve(callback: types.CallbackQuery, t, lang, db_user):
         return
 
     order_id = int(callback.data.split(":")[1])
+    existing_order = await db_repo.get_order(order_id)
+    if existing_order and existing_order.order_type.startswith("managed_traffic:"):
+        await callback.answer(strip_custom_emoji_tags(t("access_denied")), show_alert=True)
+        return
     status, order = await db_repo.claim_dealer_order(order_id, db_user.id)
 
     if status == "processed" or order is None:
@@ -642,6 +645,11 @@ async def dealer_approve(callback: types.CallbackQuery, t, lang, db_user):
     try:
         link, expire_at = await grant_vpn(user.id, user.telegram_id, order.plan)
     except Exception:
+        if order.plan == TRAFFIC_TOPUP:
+            log.exception("Dealer-confirmed traffic payment needs reconciliation: order %s", order.id)
+            await callback.message.answer(t("traffic_activation_failed"))
+            await notify_admins(f"🚨 Не подтверждено начисление трафика по заказу #{order.id}; требуется проверка.")
+            return
         await db_repo.rollback_dealer_order(order_id, db_user.id)
         log.exception("3x-UI failed at dealer confirm, balance rollback done")
         await callback.message.answer(t("dealer_activation_failed_refund"))
@@ -661,7 +669,7 @@ async def dealer_approve(callback: types.CallbackQuery, t, lang, db_user):
         user.telegram_id,
         get_text(
             user.lang,
-            "payment_success",
+            "traffic_payment_success" if order.plan == TRAFFIC_TOPUP else "payment_success",
             link=h(link),
             expire_date=expire_at.strftime("%d.%m.%Y"),
         ),
@@ -707,3 +715,81 @@ async def dealer_reject(callback: types.CallbackQuery, t, lang, db_user):
 def _contact() -> str:
     from app.config import settings
     return settings.dealer_contact
+
+
+@router.callback_query(F.data.startswith("dealer:traffic:"))
+async def dealer_traffic_review(callback: types.CallbackQuery, t, lang, db_user):
+    if not await _dealer_only(callback, db_user, t):
+        return
+    parts = callback.data.split(":")
+    sub_id, page = int(parts[2]), int(parts[3])
+    sub = await db_repo.get_dealer_subscription(db_user.id, sub_id)
+    if sub is None or sub.status == "failed" or not sub.expire_at or sub.expire_at <= utcnow():
+        await callback.answer(strip_custom_emoji_tags(t("traffic_requires_subscription")), show_alert=True)
+        return
+    order = await db_repo.create_order(
+        db_user.id, TRAFFIC_TOPUP, _dealer_price(TRAFFIC_TOPUP), "usd",
+        order_type=f"managed_traffic:{sub.id}",
+    )
+    await db_repo.update_order(order.id, status="pending_dealer")
+    await callback.answer()
+    await send_with_logo(
+        callback, t("dealer_traffic_review", price=_balance_text(float(order.amount))),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [raw_btn(t("dealer_confirm_purchase"), f"dealer:trafficconfirm:{order.id}:{page}")],
+            [raw_btn(t("btn_back"), f"dealer:sub:{sub.id}:{page}")],
+        ]),
+    )
+
+
+@router.callback_query(F.data.startswith("dealer:trafficconfirm:"))
+async def dealer_traffic_confirm(callback: types.CallbackQuery, t, lang, db_user):
+    if not await _dealer_only(callback, db_user, t):
+        return
+    parts = callback.data.split(":")
+    order_id, page = int(parts[2]), int(parts[3])
+    order = await db_repo.get_order(order_id)
+    if (order is None or order.user_id != db_user.id or order.plan != TRAFFIC_TOPUP
+            or not order.order_type.startswith("managed_traffic:")):
+        await callback.answer(strip_custom_emoji_tags(t("access_denied")), show_alert=True)
+        return
+    sub_id = int(order.order_type.split(":")[1])
+    sub = await db_repo.get_dealer_subscription(db_user.id, sub_id)
+    if sub is None or sub.status in {"failed", "pending", "renew_processing"} or not sub.expire_at or sub.expire_at <= utcnow():
+        await callback.answer(strip_custom_emoji_tags(t("traffic_requires_subscription")), show_alert=True)
+        return
+    status, order = await db_repo.claim_dealer_order(order.id, db_user.id)
+    if status != "claimed":
+        key = "dealer_balance_low" if status == "insufficient" else "dealer_already_processed"
+        await callback.answer(strip_custom_emoji_tags(t(key)), show_alert=True)
+        return
+    await callback.answer("⏳")
+    credit_started = False
+    try:
+        provider = get_vpn_provider()
+        current = await provider.get_client(sub.xui_email)
+        expires = parse_time((current or {}).get("expireAt"))
+        if (not current or not expires or expires <= utcnow()
+                or current.get("status") in {"DISABLED", "EXPIRED"}
+                or not current.get("trafficLimitBytes")):
+            raise ValueError("Subscription is not eligible for traffic credit")
+        credit_started = True
+        limit = await provider.add_traffic(sub.xui_email, 50)
+        if not await is_monthly(sub.xui_email):
+            await db_repo.set_dealer_subscription_traffic(
+                db_user.id, sub.id,
+                limit if isinstance(limit, int) else sub.traffic_limit_gb + 50,
+            )
+        if not await db_repo.complete_dealer_order(order.id, db_user.id):
+            raise RuntimeError("Traffic completion failed")
+    except Exception as exc:
+        # After a possible write, reserve stays processing for reconciliation.
+        # An uncertain HTTP timeout must not turn into free, repeatable credits.
+        if not credit_started:
+            await db_repo.rollback_dealer_order(order.id, db_user.id)
+        log.exception("Dealer traffic credit failed for subscription %s", sub.id)
+        await callback.message.answer(t("traffic_activation_failed"))
+        await notify_admins(f"🚨 Не завершена докупка трафика: подписка #{sub.id}, заказ #{order.id}.")
+        return
+    await callback.message.answer(t("traffic_added"))
+    await _show_subscription_card(callback, t, db_user.id, sub.id, page)

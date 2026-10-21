@@ -11,6 +11,7 @@ from app.handlers.migration import router as migration_router
 from app.handlers.start import router as start_router
 from app.services.payment_checker import payment_checker_loop
 from app.services.reminder import reminder_loop
+from app.services.monthly_traffic import monthly_traffic_loop
 
 logging.basicConfig(level=logging.INFO)
 
@@ -25,6 +26,7 @@ async def main():
     dp.include_router(admin_router)
     asyncio.create_task(payment_checker_loop())
     asyncio.create_task(reminder_loop())
+    asyncio.create_task(monthly_traffic_loop())
     await dp.start_polling(bot)
 
 

@@ -91,6 +91,7 @@ def sub_link_kb(t) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [_btn(t, "btn_get_link", "menu:get_link")],
         [_btn(t, "btn_buy", "menu:buy")],
+        [_btn(t, "btn_traffic_topup", "plan:traffic50")],
         [_btn(t, "btn_back", "back:main")],
     ])
 
@@ -133,7 +134,7 @@ def dealer_buy_plans_kb(t=None) -> InlineKeyboardMarkup:
         traffic = int(plan["traffic_gb"])
         rows.append([
             raw_btn(
-                t("dealer_price_buy", traffic=traffic, price="$" + format(_dealer_price(key), ".3f")),
+                t("dealer_price_buy", traffic=traffic, months=plan["months"], price="$" + format(_dealer_price(key), ".3f")),
                 f"dealer:buyplan:{key}",
             )
         ])
@@ -197,6 +198,7 @@ def dealer_subscription_card_kb(
         ])
     rows.extend([
         [_btn(t, "btn_renew", f"dealer:renew:{sub_id}:{page}")],
+        [_btn(t, "dealer_btn_traffic_topup", f"dealer:traffic:{sub_id}:{page}")],
         [_btn(t, "btn_rename", f"dealer:rename:{sub_id}:{page}")],
         [_btn(t, "btn_back", f"dealer:subs:{page}")],
     ])
@@ -212,7 +214,7 @@ def dealer_renew_plans_kb(sub_id: int, page: int, t=None) -> InlineKeyboardMarku
         traffic = int(plan["traffic_gb"])
         rows.append([
             raw_btn(
-                t("dealer_price_renew", traffic=traffic, price="$" + format(_dealer_price(key), ".3f")),
+                t("dealer_price_renew", traffic=traffic, months=plan["months"], price="$" + format(_dealer_price(key), ".3f")),
                 f"dealer:renewplan:{sub_id}:{key}:{page}",
             )
         ])
