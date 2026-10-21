@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # Курсы / Telegram Stars
     # Розничная цена новых тарифов в USD; туманы для перевода дилеру считаются по курсу.
     rub_per_usd: float = 90.0
-    toman_per_usd: float = 235000.0
+    toman_per_usd: float = 150000.0
     stars_reward_usd: float = 0.013
 
     # Дилер: внутренний баланс всегда в USD

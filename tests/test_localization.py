@@ -82,7 +82,7 @@ def test_form_text_has_real_newlines_without_decoding_customer_input(lang):
 
 @pytest.mark.parametrize("lang", LANGS)
 def test_all_dealer_keyboards_use_the_selected_language(lang, monkeypatch):
-    monkeypatch.setattr(settings, "toman_per_usd", 235000)
+    monkeypatch.setattr(settings, "toman_per_usd", 150000)
     t = translator(lang)
     keyboards = [
         builders.dealer_buy_plans_kb(t=t),
@@ -101,12 +101,12 @@ def test_all_dealer_keyboards_use_the_selected_language(lang, monkeypatch):
     for keyboard in keyboards:
         assert_language(keyboard_text(keyboard), lang)
     if lang == "fa":
-        assert "۱۱۷٬۵۰۰ تومان" in keyboard_text(keyboards[0])
-        assert "۱۱۷٬۵۰۰ تومان" in keyboard_text(keyboards[-1])
+        assert "۷۵٬۰۰۰ تومان" in keyboard_text(keyboards[0])
+        assert "۷۵٬۰۰۰ تومان" in keyboard_text(keyboards[-1])
         for keyboard in keyboards:
             assert "$" not in keyboard_text(keyboard)
         intro = get_plan_intro(t, lang)
-        assert "۲۳۵٬۰۰۰ تومان" in intro and "۳۹۹٬۵۰۰ تومان" in intro
+        assert "۱۵۰٬۰۰۰ تومان" in intro and "۲۷۰٬۰۰۰ تومان" in intro
         assert "$" not in intro and "{price" not in intro
     else:
         assert "$0.500" in keyboard_text(keyboards[0])

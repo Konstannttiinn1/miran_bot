@@ -10,13 +10,18 @@ from app.middlewares.i18n import get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
 from app.services import subscription as subscription_service
-from app.utils.tariffs import PLANS, get_dealer_debit_usd, get_price_display, get_stars_price, get_usd_price
+from app.utils.tariffs import PLANS, get_dealer_debit_usd, get_price_display, get_stars_price, get_toman_price, get_usd_price
 
 
 EXPECTED_PRICES = {
-    "month1": 1, "month2": 1.90, "month3": 2.71,
-    "month1d2": 1.50, "month2d2": 2.85, "month3d2": 4.07,
-    "month1d3": 1.70, "month2d3": 3.23, "month3d3": 4.61,
+    "month1": 1, "month2": 1.90, "month3": 2.70,
+    "month1d2": 1.50, "month2d2": 2.85, "month3d2": 4.05,
+    "month1d3": 1.80, "month2d3": 3.42, "month3d3": 4.86,
+}
+EXPECTED_TOMAN = {
+    "month1": 150000, "month2": 285000, "month3": 405000,
+    "month1d2": 225000, "month2d2": 427500, "month3d2": 607500,
+    "month1d3": 270000, "month2d3": 513000, "month3d3": 729000,
 }
 
 
@@ -33,16 +38,17 @@ def test_exact_price_list_and_derived_payment_amounts(monkeypatch):
     for rate, displayed in ((100000, "۱۰۰٬۰۰۰ تومان"), (235000, "۲۳۵٬۰۰۰ تومان"), (500000, "۵۰۰٬۰۰۰ تومان")):
         monkeypatch.setattr(settings, "toman_per_usd", rate)
         assert get_usd_price("month1") == 1
-        assert get_usd_price("month3d2") == 4.07
-        assert get_usd_price("month3d3") == 4.61
+        assert get_usd_price("month3d2") == 4.05
+        assert get_usd_price("month3d3") == 4.86
         assert get_usd_price("traffic50") == 0.5
         assert get_price_display("month1", "fa") == displayed
-    monkeypatch.setattr(settings, "toman_per_usd", 235000)
+    monkeypatch.setattr(settings, "toman_per_usd", 150000)
+    assert {plan: get_toman_price(plan) for plan in EXPECTED_TOMAN} == EXPECTED_TOMAN
     assert get_price_display("month1", "ru") == "$1"
-    assert get_price_display("month2", "fa") == "۴۴۶٬۵۰۰ تومان"
-    assert get_price_display("month3d2", "fa") == "۹۵۶٬۴۵۰ تومان"
-    assert get_price_display("traffic50", "fa") == "۱۱۷٬۵۰۰ تومان"
-    assert get_price_display("month3", "en") == "$2.71"
+    assert get_price_display("month2", "fa") == "۲۸۵٬۰۰۰ تومان"
+    assert get_price_display("month3d2", "fa") == "۶۰۷٬۵۰۰ تومان"
+    assert get_price_display("traffic50", "fa") == "۷۵٬۰۰۰ تومان"
+    assert get_price_display("month3", "en") == "$2.70"
     assert PLANS["test"]["price_toman"] == 0
 
 
@@ -60,7 +66,7 @@ def test_all_sales_menus_have_new_plans_and_no_retired_plan():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("plan", ["10gb", "40gb"])
+@pytest.mark.parametrize("plan", ["10gb", "40gb", "month3", "month3d3"])
 async def test_existing_stars_invoice_keeps_its_original_amount(database, plan):
     user = await db_repo.get_or_create_user(20001)
     order = await db_repo.create_order(user.id, plan, 123, "xtr")
@@ -150,3 +156,26 @@ async def test_receipt_uses_saved_dealer_amount(database, monkeypatch, plan, ori
         assert "$" not in caption
     assert (await db_repo.get_order(order.id)).amount == saved_usd
     assert (await db_repo.get_order(order.id)).status == "pending_dealer"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_original_amount", [True, False])
+async def test_currency_change_does_not_reprice_an_existing_bank_receipt(database, monkeypatch, has_original_amount):
+    user = await db_repo.get_or_create_user(20006)
+    order = await db_repo.create_order(user.id, "month1", 0.5, "usd")
+    data = {"order_id": order.id, "plan": "month1"}
+    if has_original_amount:
+        data["retail_toman"] = 235000
+    state = SimpleNamespace(get_data=AsyncMock(return_value=data), clear=AsyncMock())
+    monkeypatch.setattr(settings, "toman_per_usd", 150000)
+    photo = AsyncMock()
+    monkeypatch.setattr(client.bot, "send_photo", photo)
+    monkeypatch.setattr(db_repo, "list_dealers", AsyncMock(return_value=[SimpleNamespace(telegram_id=999, lang="fa")]))
+    monkeypatch.setattr(client, "notify_admins", AsyncMock())
+    message = SimpleNamespace(photo=[SimpleNamespace(file_id="old-bank-receipt")], answer=AsyncMock())
+    await client.receive_receipt(message, lambda key, **kw: get_text("fa", key, **kw), "fa", user, state)
+    caption = photo.call_args.kwargs["caption"]
+    expected = "۲۳۵٬۰۰۰ تومان" if has_original_amount else get_text("fa", "dealer_original_amount")
+    assert expected in caption
+    assert "۱۵۰٬۰۰۰ تومان" not in caption
+    assert (await db_repo.get_order(order.id)).amount == 0.5

@@ -473,7 +473,7 @@ async def test_managed_purchase_and_renewal_use_duration_prices_and_keep_bonus(d
     sub = items[0]
     assert sub.plan == "month3d3" and sub.traffic_limit_gb == 100
     assert panel[1][sub.xui_email]["hwidDeviceLimit"] == 3
-    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == pytest.approx(7.695)
+    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == pytest.approx(7.570)
     await panel[0].add_traffic(sub.xui_email, 50)
     remote = panel[1][sub.xui_email]
     remote["usedTrafficBytes"] = 120 * GB
@@ -485,7 +485,7 @@ async def test_managed_purchase_and_renewal_use_duration_prices_and_keep_bonus(d
     assert renewed.traffic_limit_gb == 150 and renewed.plan == "month2d2"
     assert remote["hwidDeviceLimit"] == 2
     assert remote["usedTrafficBytes"] == 120 * GB
-    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == pytest.approx(6.270)
+    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == pytest.approx(6.145)
 
 
 @pytest.mark.asyncio
@@ -537,9 +537,9 @@ async def test_old_payment_button_cannot_skip_a_new_device_selection(database, p
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("plan,usd,devices,days", [
-    ("month1d2", 1.50, 2, 30), ("month1d3", 1.70, 3, 30),
-    ("month2d2", 2.85, 2, 60), ("month2d3", 3.23, 3, 60),
-    ("month3d2", 4.07, 2, 90), ("month3d3", 4.61, 3, 90),
+    ("month1d2", 1.50, 2, 30), ("month1d3", 1.80, 3, 30),
+    ("month2d2", 2.85, 2, 60), ("month2d3", 3.42, 3, 60),
+    ("month3d2", 4.05, 2, 90), ("month3d3", 4.86, 3, 90),
 ])
 @pytest.mark.parametrize("method", ["stars", "heleket", "dealer"])
 async def test_device_choice_is_saved_priced_and_fulfilled_once(database, panel, monkeypatch, plan, usd, devices, days, method):

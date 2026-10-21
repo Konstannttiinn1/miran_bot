@@ -7,7 +7,8 @@ TEST_TARIFF = "test"
 DEFAULT_PLAN = "month1"
 TRAFFIC_TOPUP = "traffic50"
 DURATION_PLANS = ("month1", "month2", "month3")
-# Each next prepaid month costs 10% less; round the total once to cents.
+# Published terms cost 1 / 1.90 / 2.70 base months.
+# The second device adds 50% of the first, the third adds another 30%.
 PLANS: dict[str, dict] = {
     "test": {"days": 1, "price_usd": 0, "price_toman": 0, "traffic_gb": 1},
     **{
@@ -18,8 +19,8 @@ PLANS: dict[str, dict] = {
             )),
             "traffic_gb": 100, "monthly": True,
         }
-        for months, factor in ((1, "1"), (2, "1.90"), (3, "2.71"))
-        for devices, base_price in ((1, "1"), (2, "1.50"), (3, "1.70"))
+        for months, factor in ((1, "1"), (2, "1.90"), (3, "2.70"))
+        for devices, base_price in ((1, "1"), (2, "1.50"), (3, "1.80"))
     },
 }
 TRAFFIC_PACKAGES = {

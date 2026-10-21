@@ -240,7 +240,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
         )
         # order.amount для дилерского заказа всегда хранится в USD.
         order = await db_repo.create_order(db_user.id, plan, dealer_usd, "usd", order_type=order_type)
-        await state.update_data(plan=plan, order_id=order.id)
+        await state.update_data(plan=plan, order_id=order.id, retail_toman=retail_toman)
         await state.set_state(Purchase.waiting_receipt)
         await send_with_logo(
             callback,
@@ -403,14 +403,18 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
     await db_repo.update_order(order_id, receipt_photo_id=photo, status="pending_dealer")
     await message.answer(t("receipt_received"))
 
-    client_price = get_toman_price(plan)
+    client_price = data.get("retail_toman")
     dealer_price_usd = float(order.amount)
-    # Старый заказ может иметь цену до обновления прайса. Не подменяем
-    # указанную клиенту сумму новой розницей в уведомлении дилеру.
-    current_debit = round(
-        client_price / settings.toman_per_usd * settings.dealer_discount, 3,
-    )
-    current_price = abs(current_debit - dealer_price_usd) < 1e-9
+    # Use the amount shown in this order's bank instructions. USD alone
+    # cannot recover it after an exchange-rate change. Legacy Toman products
+    # have a fixed face value, so their existing compatibility check is safe.
+    known_client_price = isinstance(client_price, int) and client_price > 0
+    if not known_client_price and plan in RETIRED_PLANS:
+        client_price = get_toman_price(plan)
+        current_debit = round(
+            client_price / settings.toman_per_usd * settings.dealer_discount, 3,
+        )
+        known_client_price = abs(current_debit - dealer_price_usd) < 1e-9
 
     dealers = await db_repo.list_dealers()
     for d in dealers:
@@ -426,7 +430,7 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
                     plan=_product_label(plan, d.lang),
                     client_amount=(
                         _format_toman(client_price, d.lang)
-                        if current_price else get_text(d.lang, "dealer_original_amount")
+                        if known_client_price else get_text(d.lang, "dealer_original_amount")
                     ),
                     dealer_amount=_format_usd(dealer_price_usd, d.lang),
                 ),
