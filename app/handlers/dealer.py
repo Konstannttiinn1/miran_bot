@@ -34,7 +34,10 @@ from app.services.vpn_provider import (
 )
 from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_with_logo
-from app.utils.tariffs import PLANS, TRAFFIC_TOPUP, get_dealer_debit_usd
+from app.utils.tariffs import (
+    PLANS, TRAFFIC_TOPUP, format_toman, get_dealer_debit_usd,
+    get_dealer_price_display, usd_to_toman,
+)
 from app.keyboards.builders import raw_btn
 from aiogram.types import InlineKeyboardMarkup
 from app.utils.notifications import notify_admins
@@ -59,7 +62,9 @@ def _dealer_log_label(t, action: str) -> str:
     return label if label != key else t("dealer_log_other")
 
 
-def _balance_text(value: float) -> str:
+def _balance_text(value: float, lang: str = "en") -> str:
+    if lang == "fa":
+        return format_toman(usd_to_toman(value))
     return f"${float(value):,.3f}".rstrip("0").rstrip(".")
 
 
@@ -146,7 +151,7 @@ async def dealer_balance(callback: types.CallbackQuery, t, lang, db_user):
     await callback.answer()
     await send_with_logo(
         callback,
-        t("dealer_balance_msg", balance=_balance_text(db_user.dealer_balance)),
+        t("dealer_balance_msg", balance=_balance_text(db_user.dealer_balance, lang)),
         reply_markup=back_kb(t, "back:dealer"),
     )
 
@@ -219,7 +224,6 @@ async def dealer_buy_devices(callback: types.CallbackQuery, t, lang, db_user):
     if plan not in PLANS or plan == "test":
         await callback.answer(strip_custom_emoji_tags(t("invalid_plan")), show_alert=True)
         return
-    price = _dealer_price(plan)
     traffic = int(PLANS[plan]["traffic_gb"])
     await callback.answer()
     await send_with_logo(
@@ -227,8 +231,8 @@ async def dealer_buy_devices(callback: types.CallbackQuery, t, lang, db_user):
         t(
             "dealer_buy_review", traffic=traffic, days=PLANS[plan]["days"],
             devices=PLANS[plan]["devices"],
-            price="$" + format(price, ".3f"),
-            balance=_balance_text(db_user.dealer_balance),
+            price=get_dealer_price_display(plan, lang),
+            balance=_balance_text(db_user.dealer_balance, lang),
         ),
         reply_markup=dealer_buy_confirm_kb(plan, t=t),
     )
@@ -517,7 +521,6 @@ async def dealer_subscription_renew_devices(callback: types.CallbackQuery, t, la
     if sub is None or plan not in PLANS or plan == "test":
         await callback.answer(strip_custom_emoji_tags(t("invalid_data")), show_alert=True)
         return
-    price = _dealer_price(plan)
     traffic = int(PLANS[plan]["traffic_gb"])
     await callback.answer()
     await send_with_logo(
@@ -526,7 +529,7 @@ async def dealer_subscription_renew_devices(callback: types.CallbackQuery, t, la
             "dealer_renew_review", id=sub_id, name=h(sub.client_name),
             traffic=traffic, days=PLANS[plan]["days"],
             devices=PLANS[plan]["devices"],
-            price="$" + format(price, ".3f"),
+            price=get_dealer_price_display(plan, lang),
         ),
         reply_markup=dealer_renew_confirm_kb(sub_id, plan, page, t=t),
     )
@@ -785,7 +788,7 @@ async def dealer_traffic_review(callback: types.CallbackQuery, t, lang, db_user)
     await db_repo.update_order(order.id, status="pending_dealer")
     await callback.answer()
     await send_with_logo(
-        callback, t("dealer_traffic_review", price=_balance_text(float(order.amount))),
+        callback, t("dealer_traffic_review", price=_balance_text(float(order.amount), lang)),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [raw_btn(t("dealer_confirm_purchase"), f"dealer:trafficconfirm:{order.id}:{page}")],
             [raw_btn(t("btn_back"), f"dealer:sub:{sub.id}:{page}")],

@@ -511,6 +511,8 @@ async def test_period_then_devices_then_payment_and_back(database, monkeypatch, 
     assert await state.get_state() == Purchase.choosing_payment.state
     assert (await state.get_data())["plan"] == f"{period}d3"
     assert client._product_label(f"{period}d3", lang) in render.call_args.args[1]
+    if lang == "fa":
+        assert "تومان" in render.call_args.args[1] and "$" not in render.call_args.args[1]
     buttons = render.call_args.kwargs["reply_markup"].inline_keyboard
     assert buttons[-1][0].callback_data == f"plan:{period}"
     await client.choose_plan(callback(buttons[-1][0].callback_data), t, lang, user, state)

@@ -4,7 +4,7 @@ from app.config import settings
 from app.middlewares.i18n import get_text
 from app.utils.emojis import button_parts, strip_custom_emoji_tags
 from app.utils.tariffs import (
-    DURATION_PLANS, PLANS, get_dealer_debit_usd, get_device_plans,
+    DURATION_PLANS, PLANS, TRAFFIC_TOPUP, get_dealer_price_display, get_device_plans,
     get_period_plan, get_plan_button_text, get_price_display,
 )
 
@@ -85,7 +85,8 @@ def devices_kb(
 ) -> InlineKeyboardMarkup:
     rows = []
     for key in get_device_plans(plan):
-        price = "$" + format(_dealer_price(key), ".3f") if dealer_price else get_price_display(key, _detect_lang(t))
+        lang = _detect_lang(t)
+        price = get_dealer_price_display(key, lang) if dealer_price else get_price_display(key, lang)
         rows.append([raw_btn(
             t("device_option", devices=PLANS[key]["devices"], price=price),
             f"{callback_prefix}{key}{callback_suffix}",
@@ -107,7 +108,10 @@ def sub_link_kb(t) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [_btn(t, "btn_get_link", "menu:get_link")],
         [_btn(t, "btn_buy", "menu:buy")],
-        [_btn(t, "btn_traffic_topup", "plan:traffic50")],
+        [raw_btn(
+            t("btn_traffic_topup", price=get_price_display(TRAFFIC_TOPUP, _detect_lang(t))),
+            "plan:traffic50",
+        )],
         [_btn(t, "btn_back", "back:main")],
     ])
 
@@ -129,14 +133,6 @@ def dealer_menu_kb(t) -> InlineKeyboardMarkup:
     ])
 
 
-def _dealer_price(plan: str) -> float:
-    return get_dealer_debit_usd(
-        plan,
-        settings.toman_per_usd,
-        settings.dealer_discount,
-    )
-
-
 def _translator(t):
     return t if t is not None else lambda key, **kw: get_text("fa", key, **kw)
 
@@ -149,7 +145,7 @@ def dealer_buy_plans_kb(t=None) -> InlineKeyboardMarkup:
         traffic = int(plan["traffic_gb"])
         rows.append([
             raw_btn(
-                t("dealer_price_buy", traffic=traffic, months=plan["months"], price="$" + format(_dealer_price(key), ".3f")),
+                t("dealer_price_buy", traffic=traffic, months=plan["months"], price=get_dealer_price_display(key, _detect_lang(t))),
                 f"dealer:buyplan:{key}",
             )
         ])
@@ -228,7 +224,7 @@ def dealer_renew_plans_kb(sub_id: int, page: int, t=None) -> InlineKeyboardMarku
         traffic = int(plan["traffic_gb"])
         rows.append([
             raw_btn(
-                t("dealer_price_renew", traffic=traffic, months=plan["months"], price="$" + format(_dealer_price(key), ".3f")),
+                t("dealer_price_renew", traffic=traffic, months=plan["months"], price=get_dealer_price_display(key, _detect_lang(t))),
                 f"dealer:renewplan:{sub_id}:{key}:{page}",
             )
         ])

@@ -30,14 +30,18 @@ def test_exact_price_list_and_derived_payment_amounts(monkeypatch):
         assert get_usd_price(key) == usd
         assert get_stars_price(key, settings.stars_reward_usd) * settings.stars_reward_usd >= usd
         assert get_dealer_debit_usd(key, 235000, 0.5) == pytest.approx(usd * 0.5)
-    for rate in (100000, 235000, 500000):
+    for rate, displayed in ((100000, "۱۰۰٬۰۰۰ تومان"), (235000, "۲۳۵٬۰۰۰ تومان"), (500000, "۵۰۰٬۰۰۰ تومان")):
         monkeypatch.setattr(settings, "toman_per_usd", rate)
         assert get_usd_price("month1") == 1
         assert get_usd_price("month3d2") == 4.07
         assert get_usd_price("month3d3") == 4.61
         assert get_usd_price("traffic50") == 0.5
+        assert get_price_display("month1", "fa") == displayed
+    monkeypatch.setattr(settings, "toman_per_usd", 235000)
     assert get_price_display("month1", "ru") == "$1"
-    assert get_price_display("month2", "fa") == "$1.90"
+    assert get_price_display("month2", "fa") == "۴۴۶٬۵۰۰ تومان"
+    assert get_price_display("month3d2", "fa") == "۹۵۶٬۴۵۰ تومان"
+    assert get_price_display("traffic50", "fa") == "۱۱۷٬۵۰۰ تومان"
     assert get_price_display("month3", "en") == "$2.71"
     assert PLANS["test"]["price_toman"] == 0
 
@@ -111,10 +115,11 @@ async def test_retired_plan_can_be_fulfilled_for_legacy_dealer_or_crypto_order(d
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("lang", ["ru", "en", "fa"])
 @pytest.mark.parametrize("plan,original_toman,is_current", [
     ("10gb", 39000, True), ("10gb", 70000, False), ("40gb", 265000, True),
 ])
-async def test_receipt_uses_saved_dealer_amount(database, monkeypatch, plan, original_toman, is_current):
+async def test_receipt_uses_saved_dealer_amount(database, monkeypatch, plan, original_toman, is_current, lang):
     user = await db_repo.get_or_create_user(20005)
     saved_usd = round(original_toman / settings.toman_per_usd * settings.dealer_discount, 3)
     order = await db_repo.create_order(user.id, plan, saved_usd, "usd")
@@ -128,18 +133,20 @@ async def test_receipt_uses_saved_dealer_amount(database, monkeypatch, plan, ori
     photo = AsyncMock()
     monkeypatch.setattr(client.bot, "send_photo", photo)
     monkeypatch.setattr(db_repo, "list_dealers", AsyncMock(return_value=[
-        SimpleNamespace(telegram_id=999, lang="en"),
+        SimpleNamespace(telegram_id=999, lang=lang),
     ]))
     monkeypatch.setattr(client, "notify_admins", AsyncMock())
     await client.receive_receipt(
         message, lambda key, **kwargs: get_text("en", key, **kwargs), "en", user, state,
     )
     caption = photo.call_args.kwargs["caption"]
-    assert client._format_usd(saved_usd) in caption
+    assert client._format_usd(saved_usd, lang) in caption
     if is_current:
-        assert client._format_toman(original_toman, "en") in caption
+        assert client._format_toman(original_toman, lang) in caption
     else:
-        assert get_text("en", "dealer_original_amount") in caption
-        assert "39,000 Toman" not in caption
+        assert get_text(lang, "dealer_original_amount") in caption
+        assert client._format_toman(39000, lang) not in caption
+    if lang == "fa":
+        assert "$" not in caption
     assert (await db_repo.get_order(order.id)).amount == saved_usd
     assert (await db_repo.get_order(order.id)).status == "pending_dealer"

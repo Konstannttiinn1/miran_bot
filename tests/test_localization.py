@@ -16,6 +16,7 @@ from app.keyboards import builders
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services import reminder
+from app.utils.tariffs import get_plan_intro
 
 
 LOCALES = Path(__file__).resolve().parents[1] / "app" / "locales"
@@ -80,7 +81,8 @@ def test_form_text_has_real_newlines_without_decoding_customer_input(lang):
 
 
 @pytest.mark.parametrize("lang", LANGS)
-def test_all_dealer_keyboards_use_the_selected_language(lang):
+def test_all_dealer_keyboards_use_the_selected_language(lang, monkeypatch):
+    monkeypatch.setattr(settings, "toman_per_usd", 235000)
     t = translator(lang)
     keyboards = [
         builders.dealer_buy_plans_kb(t=t),
@@ -92,10 +94,22 @@ def test_all_dealer_keyboards_use_the_selected_language(lang):
         builders.dealer_created_name_kb(7, "https://example.test", t=t),
         builders.dealer_search_results_kb([], t=t),
         builders.devices_kb("month3", t, callback_prefix="dealer:buydevices:", dealer_price=True),
+        builders.plans_kb(t),
+        builders.devices_kb("month3", t),
+        builders.sub_link_kb(t),
     ]
     for keyboard in keyboards:
         assert_language(keyboard_text(keyboard), lang)
-    assert "$0.500" in keyboard_text(keyboards[0])
+    if lang == "fa":
+        assert "۱۱۷٬۵۰۰ تومان" in keyboard_text(keyboards[0])
+        assert "۱۱۷٬۵۰۰ تومان" in keyboard_text(keyboards[-1])
+        for keyboard in keyboards:
+            assert "$" not in keyboard_text(keyboard)
+        intro = get_plan_intro(t, lang)
+        assert "۲۳۵٬۰۰۰ تومان" in intro and "۳۹۹٬۵۰۰ تومان" in intro
+        assert "$" not in intro and "{price" not in intro
+    else:
+        assert "$0.500" in keyboard_text(keyboards[0])
 
 
 @pytest.mark.asyncio
@@ -136,6 +150,8 @@ async def test_dealer_screens_render_in_the_selected_language(monkeypatch, lang,
         await dealer.dealer_subscription_renew_devices(callback, t, lang, user)
     assert_language(render.call_args.args[1], lang)
     assert_language(keyboard_text(render.call_args.kwargs["reply_markup"]), lang)
+    if lang == "fa":
+        assert "$" not in render.call_args.args[1]
     if screen in {"card", "renew_review"}:
         assert "Ali &lt;test&gt;" in render.call_args.args[1]
 

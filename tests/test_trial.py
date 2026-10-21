@@ -137,7 +137,7 @@ async def test_stale_back_navigation_does_not_restore_trial_button(database, mon
     )
     render = AsyncMock()
     monkeypatch.setattr(client, "send_with_logo", render)
-    await client.back_to_plans(trial_callback(), lambda key: key, "en", user, state)
+    await client.back_to_plans(trial_callback(), lambda key, **kwargs: key, "en", user, state)
     keyboard = render.call_args.kwargs["reply_markup"]
     assert "plan:test" not in {
         button.callback_data for row in keyboard.inline_keyboard for button in row

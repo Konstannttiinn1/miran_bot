@@ -19,9 +19,9 @@ from app.utils.menu import send_main_menu, send_with_logo
 from app.utils.notifications import notify_admins
 from app.utils.tariffs import (
     PLANS, RETIRED_PLANS, TRAFFIC_TOPUP,
-    get_dealer_debit_usd, get_period_plan, get_price_display,
+    format_toman, get_dealer_debit_usd, get_period_plan, get_plan_intro, get_price_display,
     get_stars_price, get_tariff, get_toman_price, get_usd_price,
-    is_sale_product,
+    is_sale_product, usd_to_toman,
 )
 
 log = logging.getLogger(__name__)
@@ -33,13 +33,15 @@ EMPTY_KB = InlineKeyboardMarkup(inline_keyboard=[])
 
 
 def _format_toman(amount: int | float, lang: str) -> str:
-    text = f"{int(amount):,}"
     if lang == "fa":
-        text = text.translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")).replace(",", "،")
+        return format_toman(int(amount))
+    text = f"{int(amount):,}"
     return get_text(lang, "currency_toman", amount=text)
 
 
-def _format_usd(amount: int | float) -> str:
+def _format_usd(amount: int | float, lang: str = "en") -> str:
+    if lang == "fa":
+        return format_toman(usd_to_toman(amount))
     text = f"{float(amount):.3f}".rstrip("0").rstrip(".")
     return f"${text}"
 
@@ -150,7 +152,7 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
     await callback.answer()
     text = t("select_payment")
     if plan == TRAFFIC_TOPUP:
-        text = t("traffic_topup_intro") + "\n\n" + text
+        text = t("traffic_topup_intro", price=get_price_display(plan, lang)) + "\n\n" + text
     await send_with_logo(callback, text, reply_markup=payment_kb(t))
 
 
@@ -183,7 +185,7 @@ async def back_to_plans(callback: types.CallbackQuery, t, lang, db_user, state: 
     await callback.answer()
     await send_with_logo(
         callback,
-        t("select_plan"),
+        get_plan_intro(t, lang),
         reply_markup=plans_kb(t, with_test=with_test, lang=lang),
     )
 
@@ -426,7 +428,7 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
                         _format_toman(client_price, d.lang)
                         if current_price else get_text(d.lang, "dealer_original_amount")
                     ),
-                    dealer_amount=_format_usd(dealer_price_usd),
+                    dealer_amount=_format_usd(dealer_price_usd, d.lang),
                 ),
                 reply_markup=dealer_confirm_kb(order_id),
             )

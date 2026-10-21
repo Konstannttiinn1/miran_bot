@@ -14,7 +14,7 @@ from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
 from app.services.vpn_provider import subscription_link
-from app.utils.tariffs import DEFAULT_PLAN
+from app.utils.tariffs import DEFAULT_PLAN, get_plan_intro
 from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
 
@@ -178,12 +178,12 @@ async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMCont
         with_test = await db_repo.can_claim_test(db_user.id)
         await state.set_state(Purchase.choosing_plan)
         await state.update_data(plans_with_test=with_test, plan=None, order_id=None)
-        screen_text = t("select_plan")
+        screen_text = get_plan_intro(t, lang)
         if sub is not None:
             screen_text = (
                 t("subscription_expired", expire_date=sub.expire_at.strftime("%d.%m.%Y"))
                 + "\n\n"
-                + t("select_plan")
+                + get_plan_intro(t, lang)
             )
         await send_with_logo(
             callback,
@@ -206,7 +206,7 @@ async def buy(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext
     await state.set_state(Purchase.choosing_plan)
     await state.update_data(plans_with_test=False, plan=None, order_id=None)
     await callback.answer()
-    await send_with_logo(callback, t("select_plan"), reply_markup=plans_kb(t, with_test=False, lang=lang))
+    await send_with_logo(callback, get_plan_intro(t, lang), reply_markup=plans_kb(t, with_test=False, lang=lang))
 
 
 @router.callback_query(F.data == "menu:get_link")

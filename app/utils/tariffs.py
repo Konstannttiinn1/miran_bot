@@ -76,7 +76,20 @@ def get_toman_price(plan: str) -> int:
     tariff = get_tariff(plan)
     if "price_toman" in tariff:
         return int(tariff["price_toman"])
-    return int(floor(get_usd_price(plan) * _validate_toman_rate(settings.toman_per_usd) + 0.5))
+    return usd_to_toman(get_usd_price(plan))
+
+
+def usd_to_toman(amount: float) -> int:
+    rate = _validate_toman_rate(settings.toman_per_usd)
+    return int((Decimal(str(amount)) * Decimal(str(rate))).quantize(
+        Decimal("1"), rounding=ROUND_HALF_UP,
+    ))
+
+
+def format_toman(amount: int) -> str:
+    """Format a Toman amount for the Persian interface."""
+    number = f"{int(amount):,}".replace(",", "٬").translate(_FA_DIGITS)
+    return f"{number} تومان"
 
 
 def get_rub_price(plan: str, rub_per_usd: float) -> int:
@@ -94,15 +107,29 @@ def get_stars_price(plan: str, star_reward_usd: float) -> int:
 
 
 def get_price_display(plan: str, lang: str, rub_per_usd: float = 90.0) -> str:
+    if lang == "fa":
+        return format_toman(get_toman_price(plan))
     if plan in PLANS or plan in TRAFFIC_PACKAGES:
         amount = get_usd_price(plan)
         return "$" + (str(int(amount)) if amount.is_integer() else f"{amount:.2f}")
-    if lang == "fa":
-        amount = f"{get_toman_price(plan):,}".replace(",", "،").translate(_FA_DIGITS)
-        return f"{amount} تومان"
     if lang == "ru":
         return f"{get_rub_price(plan, rub_per_usd)} ₽"
     return f"${get_usd_price(plan):.2f}"
+
+
+def get_plan_intro(t, lang: str) -> str:
+    return t(
+        "select_plan", price1=get_price_display("month1", lang),
+        price2=get_price_display("month1d2", lang),
+        price3=get_price_display("month1d3", lang),
+    )
+
+
+def get_dealer_price_display(plan: str, lang: str) -> str:
+    amount = get_dealer_debit_usd(plan, settings.toman_per_usd, settings.dealer_discount)
+    if lang == "fa":
+        return format_toman(usd_to_toman(amount))
+    return "$" + format(amount, ".3f")
 
 
 def get_plan_button_text(plan: str, lang: str, rub_per_usd: float = 90.0) -> str:
