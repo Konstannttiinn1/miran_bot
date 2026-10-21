@@ -6,11 +6,15 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy import select
 
 from app.config import settings
 from app.database.models import MonthlyTrafficQuota, Order, utcnow
 from app.handlers import client, dealer
+from app.handlers.states import Purchase
 from app.keyboards import builders
 from app.middlewares.i18n import get_text
 from app.repositories import db_repo
@@ -70,13 +74,16 @@ def panel(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("months", [1, 2, 3])
-async def test_paid_duration_has_a_monthly_100gb_limit(database, panel, months):
+@pytest.mark.parametrize("devices", [1, 2, 3])
+async def test_paid_duration_has_a_monthly_100gb_limit(database, panel, months, devices):
     provider, users = panel
     user = await db_repo.get_or_create_user(50000 + months)
-    await subscription.grant_vpn(user.id, user.telegram_id, f"month{months}")
+    plan = f"month{months}" if devices == 1 else f"month{months}d{devices}"
+    await subscription.grant_vpn(user.id, user.telegram_id, plan)
     remote = users[str(user.telegram_id)]
     assert remote["trafficLimitBytes"] == 100 * GB
     assert remote["trafficLimitStrategy"] == "MONTH_ROLLING"
+    assert remote["hwidDeviceLimit"] == devices
     sub = await db_repo.get_subscription(user.id)
     assert months * 30 * 86400 - 2 < (sub.expire_at - utcnow()).total_seconds() <= months * 30 * 86400
     assert sub.traffic_limit_gb == 100
@@ -460,20 +467,177 @@ async def test_managed_purchase_and_renewal_use_duration_prices_and_keep_bonus(d
     monkeypatch.setattr(dealer, "send_with_logo", AsyncMock())
     monkeypatch.setattr(dealer, "_show_subscription_card", AsyncMock())
     state = SimpleNamespace(set_state=AsyncMock(), update_data=AsyncMock())
-    await dealer.dealer_buy_confirm(callback("dealer:buyconfirm:month3"), lambda key, **kw: key, "en", owner, state)
+    await dealer.dealer_buy_confirm(callback("dealer:buyconfirm:month3d3"), lambda key, **kw: key, "en", owner, state)
     items, count = await db_repo.list_dealer_subscriptions(owner.id)
     assert count == 1
     sub = items[0]
-    assert sub.plan == "month3" and sub.traffic_limit_gb == 100
-    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == pytest.approx(8.645)
+    assert sub.plan == "month3d3" and sub.traffic_limit_gb == 100
+    assert panel[1][sub.xui_email]["hwidDeviceLimit"] == 3
+    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == pytest.approx(7.695)
     await panel[0].add_traffic(sub.xui_email, 50)
     remote = panel[1][sub.xui_email]
     remote["usedTrafficBytes"] = 120 * GB
     await dealer.dealer_subscription_renew_confirm(
-        callback(f"dealer:renewconfirm:{sub.id}:month2:0"), lambda key, **kw: key, "en", owner,
+        callback(f"dealer:renewconfirm:{sub.id}:month2d2:0"), lambda key, **kw: key, "en", owner,
     )
     renewed = await db_repo.get_dealer_subscription(owner.id, sub.id)
     assert renewed.expire_at == sub.expire_at + timedelta(days=60)
-    assert renewed.traffic_limit_gb == 150 and renewed.plan == "month2"
+    assert renewed.traffic_limit_gb == 150 and renewed.plan == "month2d2"
+    assert remote["hwidDeviceLimit"] == 2
     assert remote["usedTrafficBytes"] == 120 * GB
-    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == pytest.approx(7.695)
+    assert (await db_repo.get_user_by_id(owner.id)).dealer_balance == pytest.approx(6.270)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lang", ["ru", "en", "fa"])
+@pytest.mark.parametrize("months", [1, 2, 3])
+async def test_period_then_devices_then_payment_and_back(database, monkeypatch, lang, months):
+    user = await db_repo.get_or_create_user(50400)
+    state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=user.telegram_id, user_id=user.telegram_id))
+    await state.update_data(plan="month1", order_id=999)
+    render = AsyncMock()
+    monkeypatch.setattr(client, "send_with_logo", render)
+    t = lambda key, **kw: get_text(lang, key, **kw)
+    period = f"month{months}"
+    await client.choose_plan(callback(f"plan:{period}"), t, lang, user, state)
+    assert await state.get_state() == Purchase.choosing_devices.state
+    assert (await state.get_data())["plan"] is None
+    assert (await state.get_data())["order_id"] is None
+    buttons = render.call_args.kwargs["reply_markup"].inline_keyboard
+    assert {b.callback_data for row in buttons for b in row} == {
+        f"device:{period}", f"device:{period}d2", f"device:{period}d3", "back:plans",
+    }
+    await client.choose_devices(callback(f"device:{period}d3"), t, lang, user, state)
+    assert await state.get_state() == Purchase.choosing_payment.state
+    assert (await state.get_data())["plan"] == f"{period}d3"
+    assert client._product_label(f"{period}d3", lang) in render.call_args.args[1]
+    buttons = render.call_args.kwargs["reply_markup"].inline_keyboard
+    assert buttons[-1][0].callback_data == f"plan:{period}"
+    await client.choose_plan(callback(buttons[-1][0].callback_data), t, lang, user, state)
+    assert await state.get_state() == Purchase.choosing_devices.state
+    assert (await state.get_data())["plan"] is None
+    await state.storage.close()
+
+
+@pytest.mark.asyncio
+async def test_old_payment_button_cannot_skip_a_new_device_selection(database, panel, monkeypatch):
+    user = await db_repo.get_or_create_user(50401)
+    state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=user.telegram_id, user_id=user.telegram_id))
+    await state.update_data(plan="month3d3")
+    monkeypatch.setattr(client, "send_with_logo", AsyncMock())
+    await client.choose_plan(callback("plan:month1"), lambda key, **kw: key, "en", user, state)
+    await client.choose_payment(callback("pay:stars"), lambda key, **kw: key, "en", user, state)
+    async with database() as session:
+        assert await session.scalar(select(Order)) is None
+    assert panel[0]._request.await_count == 0
+    await state.storage.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("plan,usd,devices,days", [
+    ("month1d2", 1.50, 2, 30), ("month1d3", 1.70, 3, 30),
+    ("month2d2", 2.85, 2, 60), ("month2d3", 3.23, 3, 60),
+    ("month3d2", 4.07, 2, 90), ("month3d3", 4.61, 3, 90),
+])
+@pytest.mark.parametrize("method", ["stars", "heleket", "dealer"])
+async def test_device_choice_is_saved_priced_and_fulfilled_once(database, panel, monkeypatch, plan, usd, devices, days, method):
+    from app.services import payment_checker
+
+    monkeypatch.setattr(settings, "vpn_provider", "remnawave")
+    monkeypatch.setattr(settings, "dealer_discount", 0.5)
+    monkeypatch.setattr(settings, "heleket_enabled", True)
+    monkeypatch.setattr(client.heleket, "is_configured", lambda: True)
+    invoice = AsyncMock(return_value={"uuid": "device-invoice", "url": "https://pay.example.test/device"})
+    monkeypatch.setattr(client.heleket, "create_invoice", invoice)
+    monkeypatch.setattr(client, "send_with_logo", AsyncMock())
+    monkeypatch.setattr(client, "notify_admins", AsyncMock())
+    monkeypatch.setattr(dealer, "notify_admins", AsyncMock())
+    monkeypatch.setattr(payment_checker, "notify_admins", AsyncMock())
+    monkeypatch.setattr(dealer.bot, "send_message", AsyncMock())
+    user = await db_repo.get_or_create_user(50402)
+    state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=user.telegram_id, user_id=user.telegram_id))
+    t = lambda key, **kw: get_text("en", key, **kw)
+    await client.choose_devices(callback(f"device:{plan}"), t, "en", user, state)
+    cb = callback(f"pay:{method}")
+    cb.message.answer_invoice = AsyncMock()
+    await client.choose_payment(cb, t, "en", user, state)
+    async with database() as session:
+        order = await session.scalar(select(Order).where(Order.user_id == user.id))
+    expected = {"stars": get_stars_price(plan, settings.stars_reward_usd), "heleket": usd, "dealer": usd / 2}[method]
+    assert order.plan == plan and order.order_type == "purchase"
+    assert order.amount == pytest.approx(expected)
+    if method == "stars":
+        payload = cb.message.answer_invoice.call_args.kwargs["payload"]
+        assert cb.message.answer_invoice.call_args.kwargs["prices"][0].amount == expected
+        assert client._product_label(plan, "en") == cb.message.answer_invoice.call_args.kwargs["description"]
+        query = SimpleNamespace(invoice_payload=payload, currency="XTR", total_amount=expected, answer=AsyncMock())
+        await client.stars_pre_checkout(query, t, "en", user)
+        assert query.answer.call_args.kwargs["ok"] is True
+        message = SimpleNamespace(answer=AsyncMock(), successful_payment=SimpleNamespace(
+            currency="XTR", total_amount=expected, invoice_payload=payload, telegram_payment_charge_id="device-charge",
+        ))
+        for _ in range(2):
+            await client.stars_successful_payment(message, t, "en", user)
+    elif method == "heleket":
+        invoice.assert_awaited_once_with(usd, order.id)
+        monkeypatch.setattr(payment_checker.heleket, "get_payment", AsyncMock(return_value={"paid": True}))
+        monkeypatch.setattr(payment_checker.heleket, "is_paid", lambda data: data["paid"])
+        for _ in range(2):
+            await payment_checker.check_pending_payments()
+    else:
+        approver = await db_repo.get_or_create_user(50403)
+        await db_repo.set_user_role(approver.telegram_id, "dealer")
+        await db_repo.change_dealer_balance(approver.id, 10)
+        approver = await db_repo.get_user_by_id(approver.id)
+        monkeypatch.setattr(db_repo, "list_dealers", AsyncMock(return_value=[SimpleNamespace(telegram_id=approver.telegram_id, lang="en")]))
+        send_photo = AsyncMock()
+        monkeypatch.setattr(client.bot, "send_photo", send_photo)
+        await client.receive_receipt(SimpleNamespace(photo=[SimpleNamespace(file_id="device-receipt")], answer=AsyncMock()), t, "en", user, state)
+        assert client._product_label(plan, "en") in send_photo.call_args.kwargs["caption"]
+        for _ in range(2):
+            await dealer.dealer_approve(callback(f"dealer_ok:{order.id}"), t, "en", approver)
+        assert (await db_repo.get_user_by_id(approver.id)).dealer_balance == pytest.approx(10 - expected)
+    assert (await db_repo.get_order(order.id)).status == "paid"
+    remote = panel[1][str(user.telegram_id)]
+    assert remote["hwidDeviceLimit"] == devices
+    assert remote["trafficLimitBytes"] == 100 * GB
+    sub = await db_repo.get_subscription(user.id)
+    assert days * 86400 - 2 < (sub.expire_at - utcnow()).total_seconds() <= days * 86400
+    assert panel[0]._save_mapping.await_count == 1
+    await state.storage.close()
+
+
+@pytest.mark.asyncio
+async def test_device_change_topup_and_monthly_reset_keep_one_shared_allowance(database, panel):
+    user = await db_repo.get_or_create_user(50404)
+    await subscription.grant_vpn(user.id, user.telegram_id, "month1d2")
+    remote = panel[1][str(user.telegram_id)]
+    remote["usedTrafficBytes"] = 80 * GB
+    expires = monthly_traffic.parse_time(remote["expireAt"])
+    await subscription.grant_vpn(user.id, user.telegram_id, TRAFFIC_TOPUP)
+    assert remote["hwidDeviceLimit"] == 2 and remote["trafficLimitBytes"] == 150 * GB
+    assert monthly_traffic.parse_time(remote["expireAt"]) == expires
+    await subscription.grant_vpn(user.id, user.telegram_id, "month3d3")
+    assert remote["hwidDeviceLimit"] == 3 and remote["trafficLimitBytes"] == 150 * GB
+    assert remote["usedTrafficBytes"] == 80 * GB
+    assert monthly_traffic.parse_time(remote["expireAt"]) == expires + timedelta(days=90)
+    remote.update(usedTrafficBytes=0, lastTrafficResetAt=(utcnow() + timedelta(days=30)).isoformat() + "Z")
+    await monthly_traffic.reconcile_one(panel[0], str(user.telegram_id))
+    assert remote["hwidDeviceLimit"] == 3 and remote["trafficLimitBytes"] == 100 * GB
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["renewplan", "renewdevices"])
+async def test_device_selection_for_a_managed_subscription_checks_the_owner(database, panel, monkeypatch, action):
+    owner, sub = await create_managed(panel, monkeypatch)
+    other = await db_repo.get_or_create_user(50405)
+    await db_repo.set_user_role(other.telegram_id, "dealer")
+    other = await db_repo.get_user_by_id(other.id)
+    render = AsyncMock()
+    monkeypatch.setattr(dealer, "send_with_logo", render)
+    cb = callback(f"dealer:{action}:{sub.id}:month1d3:0")
+    handler = dealer.dealer_subscription_renew_plan if action == "renewplan" else dealer.dealer_subscription_renew_devices
+    await handler(cb, lambda key, **kw: key, "en", other)
+    assert cb.answer.call_args.kwargs["show_alert"] is True
+    assert render.await_count == 0
+    assert panel[1][sub.xui_email]["hwidDeviceLimit"] == 1

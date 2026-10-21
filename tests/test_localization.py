@@ -91,6 +91,7 @@ def test_all_dealer_keyboards_use_the_selected_language(lang):
         builders.dealer_renew_confirm_kb(7, "month1", 0, t=t),
         builders.dealer_created_name_kb(7, "https://example.test", t=t),
         builders.dealer_search_results_kb([], t=t),
+        builders.devices_kb("month3", t, callback_prefix="dealer:buydevices:", dealer_price=True),
     ]
     for keyboard in keyboards:
         assert_language(keyboard_text(keyboard), lang)
@@ -99,7 +100,7 @@ def test_all_dealer_keyboards_use_the_selected_language(lang):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("lang", LANGS)
-@pytest.mark.parametrize("screen", ["buy", "buy_review", "list", "card", "search", "renew", "renew_review"])
+@pytest.mark.parametrize("screen", ["buy", "buy_devices", "buy_review", "list", "card", "search", "renew", "renew_devices", "renew_review"])
 async def test_dealer_screens_render_in_the_selected_language(monkeypatch, lang, screen):
     user = SimpleNamespace(id=1, telegram_id=40001, role="dealer", dealer_balance=0)
     callback = SimpleNamespace(data="dealer:buyplan:month1", answer=AsyncMock())
@@ -113,8 +114,11 @@ async def test_dealer_screens_render_in_the_selected_language(monkeypatch, lang,
     t = translator(lang)
     if screen == "buy":
         await dealer.dealer_buy_subscription(callback, t, lang, user, state)
-    elif screen == "buy_review":
+    elif screen == "buy_devices":
         await dealer.dealer_buy_plan(callback, t, lang, user)
+    elif screen == "buy_review":
+        callback.data = "dealer:buydevices:month1d3"
+        await dealer.dealer_buy_devices(callback, t, lang, user)
     elif screen == "list":
         await dealer.dealer_subscriptions_first(callback, t, lang, user, state)
     elif screen == "card":
@@ -124,9 +128,12 @@ async def test_dealer_screens_render_in_the_selected_language(monkeypatch, lang,
     elif screen == "renew":
         callback.data = "dealer:renew:7:0"
         await dealer.dealer_subscription_renew(callback, t, lang, user)
-    else:
+    elif screen == "renew_devices":
         callback.data = "dealer:renewplan:7:month1:0"
         await dealer.dealer_subscription_renew_plan(callback, t, lang, user)
+    else:
+        callback.data = "dealer:renewdevices:7:month1d2:0"
+        await dealer.dealer_subscription_renew_devices(callback, t, lang, user)
     assert_language(render.call_args.args[1], lang)
     assert_language(keyboard_text(render.call_args.kwargs["reply_markup"]), lang)
     if screen in {"card", "renew_review"}:

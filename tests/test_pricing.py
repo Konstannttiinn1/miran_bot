@@ -13,21 +13,28 @@ from app.services import subscription as subscription_service
 from app.utils.tariffs import PLANS, get_dealer_debit_usd, get_price_display, get_stars_price, get_usd_price
 
 
-EXPECTED_PRICES = {"month1": 1, "month2": 1.90, "month3": 2.71}
+EXPECTED_PRICES = {
+    "month1": 1, "month2": 1.90, "month3": 2.71,
+    "month1d2": 1.50, "month2d2": 2.85, "month3d2": 4.07,
+    "month1d3": 1.70, "month2d3": 3.23, "month3d3": 4.61,
+}
 
 
 def test_exact_price_list_and_derived_payment_amounts(monkeypatch):
     assert {key: value["price_usd"] for key, value in PLANS.items() if key != "test"} == EXPECTED_PRICES
     for key, usd in EXPECTED_PRICES.items():
-        assert PLANS[key]["days"] == int(key[-1]) * 30
+        assert PLANS[key]["days"] == int(key[5]) * 30
+        assert PLANS[key]["devices"] == (int(key[-1]) if "d" in key else 1)
         assert PLANS[key]["traffic_gb"] == 100
         assert PLANS[key]["monthly"] is True
         assert get_usd_price(key) == usd
         assert get_stars_price(key, settings.stars_reward_usd) * settings.stars_reward_usd >= usd
-        assert get_dealer_debit_usd(key, 235000, 0.5) == usd * 0.5
+        assert get_dealer_debit_usd(key, 235000, 0.5) == pytest.approx(usd * 0.5)
     for rate in (100000, 235000, 500000):
         monkeypatch.setattr(settings, "toman_per_usd", rate)
         assert get_usd_price("month1") == 1
+        assert get_usd_price("month3d2") == 4.07
+        assert get_usd_price("month3d3") == 4.61
         assert get_usd_price("traffic50") == 0.5
     assert get_price_display("month1", "ru") == "$1"
     assert get_price_display("month2", "fa") == "$1.90"
@@ -42,8 +49,9 @@ def test_all_sales_menus_have_new_plans_and_no_retired_plan():
         (dealer_renew_plans_kb(123, 0), "dealer:renewplan:123:"),
     ]:
         callbacks = {b.callback_data for row in kb.inline_keyboard for b in row}
-        for key in EXPECTED_PRICES:
+        for key in ("month1", "month2", "month3"):
             assert any(data.startswith(prefix + key) for data in callbacks)
+        assert len(callbacks) == 4
         assert not any("gb" in data or "traffic50" in data for data in callbacks)
 
 

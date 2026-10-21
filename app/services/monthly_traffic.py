@@ -114,6 +114,8 @@ async def grant_monthly(provider, email: str, days: int, limit_ip: int = 1) -> d
         raise RuntimeError("Monthly subscriptions require the configured Remnawave provider")
     if days not in (30, 60, 90):
         raise ValueError("Unsupported monthly duration")
+    if limit_ip not in (1, 2, 3):
+        raise ValueError("Monthly device limit must be 1, 2 or 3")
 
     async with _locked(email, create=True) as (session, quota):
         user = await provider.get_client(email)
@@ -132,7 +134,7 @@ async def grant_monthly(provider, email: str, days: int, limit_ip: int = 1) -> d
             "expireAt": expires.isoformat() + "Z",
             "trafficLimitBytes": limit,
             "trafficLimitStrategy": "MONTH_ROLLING",
-            "hwidDeviceLimit": max(0, int(limit_ip)),
+            "hwidDeviceLimit": int(limit_ip),
         }
         if user:
             # Start a genuinely new cycle after a trial, old product or expiry.

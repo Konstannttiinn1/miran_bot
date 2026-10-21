@@ -3,7 +3,10 @@ from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMa
 from app.config import settings
 from app.middlewares.i18n import get_text
 from app.utils.emojis import button_parts, strip_custom_emoji_tags
-from app.utils.tariffs import PLANS, get_dealer_debit_usd, get_plan_button_text
+from app.utils.tariffs import (
+    DURATION_PLANS, PLANS, get_dealer_debit_usd, get_device_plans,
+    get_period_plan, get_plan_button_text, get_price_display,
+)
 
 
 def raw_btn(text: str, callback: str, **kw) -> InlineKeyboardButton:
@@ -63,9 +66,7 @@ def main_menu_kb(t) -> InlineKeyboardMarkup:
 def plans_kb(t, with_test: bool = False, *, lang: str | None = None) -> InlineKeyboardMarkup:
     lang = lang or _detect_lang(t)
     rows = []
-    for key in PLANS:
-        if key == "test":
-            continue
+    for key in DURATION_PLANS:
         rows.append([
             raw_btn(
                 get_plan_button_text(key, lang, settings.rub_per_usd),
@@ -78,12 +79,27 @@ def plans_kb(t, with_test: bool = False, *, lang: str | None = None) -> InlineKe
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def payment_kb(t) -> InlineKeyboardMarkup:
+def devices_kb(
+    plan: str, t, *, callback_prefix: str = "device:", callback_suffix: str = "",
+    back_callback: str = "back:plans", dealer_price: bool = False,
+) -> InlineKeyboardMarkup:
+    rows = []
+    for key in get_device_plans(plan):
+        price = "$" + format(_dealer_price(key), ".3f") if dealer_price else get_price_display(key, _detect_lang(t))
+        rows.append([raw_btn(
+            t("device_option", devices=PLANS[key]["devices"], price=price),
+            f"{callback_prefix}{key}{callback_suffix}",
+        )])
+    rows.append([_btn(t, "btn_back", back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def payment_kb(t, back_callback: str = "back:plans") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [_btn(t, "pay_stars", "pay:stars")],
         [_btn(t, "pay_heleket", "pay:heleket")],
         [_btn(t, "pay_dealer", "pay:dealer")],
-        [_btn(t, "btn_back", "back:plans")],
+        [_btn(t, "btn_back", back_callback)],
     ])
 
 
@@ -128,9 +144,8 @@ def _translator(t):
 def dealer_buy_plans_kb(t=None) -> InlineKeyboardMarkup:
     t = _translator(t)
     rows = []
-    for key, plan in PLANS.items():
-        if key == "test":
-            continue
+    for key in DURATION_PLANS:
+        plan = PLANS[key]
         traffic = int(plan["traffic_gb"])
         rows.append([
             raw_btn(
@@ -146,7 +161,7 @@ def dealer_buy_confirm_kb(plan: str, t=None) -> InlineKeyboardMarkup:
     t = _translator(t)
     return InlineKeyboardMarkup(inline_keyboard=[
         [_btn(t, "dealer_confirm_purchase", f"dealer:buyconfirm:{plan}")],
-        [_btn(t, "btn_back", "dealer:buy_sub")],
+        [_btn(t, "btn_back", f"dealer:buyplan:{get_period_plan(plan)}")],
     ])
 
 
@@ -208,9 +223,8 @@ def dealer_subscription_card_kb(
 def dealer_renew_plans_kb(sub_id: int, page: int, t=None) -> InlineKeyboardMarkup:
     t = _translator(t)
     rows = []
-    for key, plan in PLANS.items():
-        if key == "test":
-            continue
+    for key in DURATION_PLANS:
+        plan = PLANS[key]
         traffic = int(plan["traffic_gb"])
         rows.append([
             raw_btn(
@@ -226,7 +240,7 @@ def dealer_renew_confirm_kb(sub_id: int, plan: str, page: int, t=None) -> Inline
     t = _translator(t)
     return InlineKeyboardMarkup(inline_keyboard=[
         [_btn(t, "dealer_confirm_renewal", f"dealer:renewconfirm:{sub_id}:{plan}:{page}")],
-        [_btn(t, "btn_back", f"dealer:renew:{sub_id}:{page}")],
+        [_btn(t, "btn_back", f"dealer:renewplan:{sub_id}:{get_period_plan(plan)}:{page}")],
     ])
 
 

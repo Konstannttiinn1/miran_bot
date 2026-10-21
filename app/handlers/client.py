@@ -8,7 +8,7 @@ from aiogram.types import InlineKeyboardMarkup, LabeledPrice
 from app.bot import bot
 from app.config import settings
 from app.handlers.states import Purchase
-from app.keyboards.builders import back_kb, dealer_confirm_kb, payment_kb, plans_kb
+from app.keyboards.builders import back_kb, dealer_confirm_kb, devices_kb, payment_kb, plans_kb
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services import heleket
@@ -18,8 +18,9 @@ from app.utils.emojis import apply_emoji, strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
 from app.utils.notifications import notify_admins
 from app.utils.tariffs import (
-    RETIRED_PLANS, TRAFFIC_TOPUP,
-    get_dealer_debit_usd, get_stars_price, get_tariff, get_toman_price, get_usd_price,
+    PLANS, RETIRED_PLANS, TRAFFIC_TOPUP,
+    get_dealer_debit_usd, get_period_plan, get_price_display,
+    get_stars_price, get_tariff, get_toman_price, get_usd_price,
     is_sale_product,
 )
 
@@ -48,7 +49,10 @@ def _product_label(plan: str, lang: str) -> str:
     if plan == TRAFFIC_TOPUP:
         return get_text(lang, "traffic_invoice_title")
     key = "monthly_product" if tariff.get("monthly") else "legacy_product"
-    return get_text(lang, key, traffic=tariff["traffic_gb"], days=tariff["days"])
+    return get_text(
+        lang, key, traffic=tariff["traffic_gb"], days=tariff["days"],
+        devices=tariff.get("devices", 1),
+    )
 
 
 def _stars_payload(order_id: int, user_id: int, plan: str) -> str:
@@ -79,25 +83,25 @@ def _payment_error(lang: str, activation: bool = False) -> str:
 
 def _invoice_copy(lang: str, plan: str, stars: int) -> tuple[str, str, str]:
     tariff = get_tariff(plan)
-    traffic, days = int(tariff["traffic_gb"]), int(tariff["days"])
+    traffic = int(tariff["traffic_gb"])
     if plan == TRAFFIC_TOPUP:
         title = get_text(lang, "traffic_invoice_title")
         return title, get_text(lang, "traffic_invoice_description"), f"50 GB · {stars} Stars"
     if lang == "fa":
         return (
             f"ORION_VPN · {traffic} GB",
-            f"اشتراک {days} روزه VPN با {traffic} گیگابایت ترافیک در ماه",
+            _product_label(plan, lang),
             f"{traffic} GB · {stars} Stars",
         )
     if lang == "ru":
         return (
             f"ORION_VPN · {traffic} ГБ",
-            f"VPN на {days} дней, {traffic} ГБ каждые 30 дней",
+            _product_label(plan, lang),
             f"{traffic} ГБ · {stars} Stars",
         )
     return (
         f"ORION_VPN · {traffic} GB",
-        f"{days}-day VPN plan with {traffic} GB every 30 days",
+        _product_label(plan, lang),
         f"{traffic} GB · {stars} Stars",
     )
 
@@ -131,6 +135,16 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
     if plan == TRAFFIC_TOPUP and not await can_buy_traffic(db_user.id):
         await callback.answer(strip_custom_emoji_tags(t("traffic_requires_subscription")), show_alert=True)
         return
+    if get_tariff(plan).get("monthly"):
+        await state.update_data(plan=None, order_id=None)
+        await state.set_state(Purchase.choosing_devices)
+        await callback.answer()
+        await send_with_logo(
+            callback,
+            t("select_devices", months=PLANS[plan]["months"]),
+            reply_markup=devices_kb(plan, t),
+        )
+        return
     await state.update_data(plan=plan)
     await state.set_state(Purchase.choosing_payment)
     await callback.answer()
@@ -140,6 +154,23 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
     await send_with_logo(callback, text, reply_markup=payment_kb(t))
 
 
+@router.callback_query(F.data.startswith("device:"))
+async def choose_devices(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
+    plan = callback.data.split(":")[1]
+    if plan not in PLANS or not PLANS[plan].get("monthly"):
+        await callback.answer(strip_custom_emoji_tags(t("invalid_plan")), show_alert=True)
+        return
+    await state.update_data(plan=plan, order_id=None)
+    await state.set_state(Purchase.choosing_payment)
+    await callback.answer()
+    await send_with_logo(
+        callback,
+        t("purchase_summary", product=_product_label(plan, lang), price=get_price_display(plan, lang))
+        + "\n\n" + t("select_payment"),
+        reply_markup=payment_kb(t, f"plan:{get_period_plan(plan)}"),
+    )
+
+
 @router.callback_query(F.data == "back:plans")
 async def back_to_plans(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     data = await state.get_data()
@@ -147,7 +178,7 @@ async def back_to_plans(callback: types.CallbackQuery, t, lang, db_user, state: 
         bool(data.get("plans_with_test", False))
         and await db_repo.can_claim_test(db_user.id)
     )
-    await state.update_data(plans_with_test=with_test)
+    await state.update_data(plans_with_test=with_test, plan=None, order_id=None)
     await state.set_state(Purchase.choosing_plan)
     await callback.answer()
     await send_with_logo(
@@ -177,6 +208,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
     if get_tariff(plan).get("monthly") and provider_name() != "remnawave":
         await send_with_logo(callback, t("sales_unavailable"))
         return
+    back_callback = f"plan:{get_period_plan(plan)}" if get_tariff(plan).get("monthly") else "back:plans"
 
     if method == "stars":
         await state.clear()
@@ -225,7 +257,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
             await send_with_logo(
                 callback,
                 t("pay_temporarily_disabled"),
-                reply_markup=payment_kb(t),
+                reply_markup=payment_kb(t, back_callback),
             )
             return
         await state.clear()
@@ -249,7 +281,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
     await send_with_logo(
         callback,
         t("payment_placeholder") + f"\n\n{plan} ➜ {method}",
-        reply_markup=payment_kb(t),
+        reply_markup=payment_kb(t, back_callback),
     )
 
 

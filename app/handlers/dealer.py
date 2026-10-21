@@ -20,6 +20,7 @@ from app.keyboards.builders import (
     dealer_search_results_kb,
     dealer_subscription_card_kb,
     dealer_subscriptions_kb,
+    devices_kb,
 )
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
@@ -121,6 +122,9 @@ async def _show_subscription_card(
         "dealer_subscription_details", id=sub.id, name=h(sub.client_name),
         traffic=sub.traffic_limit_gb, expire=expire, status=status,
     )
+    tariff = PLANS.get(getattr(sub, "plan", None), {})
+    if tariff.get("monthly"):
+        text += t("subscription_devices", devices=tariff["devices"]) + "\n"
     if link:
         text += f"\n🔗 <code>{h(link)}</code>"
     else:
@@ -196,6 +200,25 @@ async def dealer_buy_plan(callback: types.CallbackQuery, t, lang, db_user):
     if plan not in PLANS or plan == "test":
         await callback.answer(strip_custom_emoji_tags(t("invalid_plan")), show_alert=True)
         return
+    await callback.answer()
+    await send_with_logo(
+        callback,
+        t("select_devices", months=PLANS[plan]["months"]),
+        reply_markup=devices_kb(
+            plan, t, callback_prefix="dealer:buydevices:",
+            back_callback="dealer:buy_sub", dealer_price=True,
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("dealer:buydevices:"))
+async def dealer_buy_devices(callback: types.CallbackQuery, t, lang, db_user):
+    if not await _dealer_only(callback, db_user, t):
+        return
+    plan = callback.data.split(":")[2]
+    if plan not in PLANS or plan == "test":
+        await callback.answer(strip_custom_emoji_tags(t("invalid_plan")), show_alert=True)
+        return
     price = _dealer_price(plan)
     traffic = int(PLANS[plan]["traffic_gb"])
     await callback.answer()
@@ -203,6 +226,7 @@ async def dealer_buy_plan(callback: types.CallbackQuery, t, lang, db_user):
         callback,
         t(
             "dealer_buy_review", traffic=traffic, days=PLANS[plan]["days"],
+            devices=PLANS[plan]["devices"],
             price="$" + format(price, ".3f"),
             balance=_balance_text(db_user.dealer_balance),
         ),
@@ -237,7 +261,9 @@ async def dealer_buy_confirm(callback: types.CallbackQuery, t, lang, db_user, st
     await callback.answer("⏳")
     tariff = PLANS[plan]
     try:
-        expire_at = await grant_monthly(get_vpn_provider(), sub.xui_email, int(tariff["days"]))
+        expire_at = await grant_monthly(
+            get_vpn_provider(), sub.xui_email, int(tariff["days"]), limit_ip=tariff["devices"],
+        )
         completed = await db_repo.complete_dealer_subscription_purchase(
             sub.id,
             db_user.id,
@@ -467,6 +493,30 @@ async def dealer_subscription_renew_plan(callback: types.CallbackQuery, t, lang,
     if sub is None or plan not in PLANS or plan == "test":
         await callback.answer(strip_custom_emoji_tags(t("invalid_data")), show_alert=True)
         return
+    await callback.answer()
+    await send_with_logo(
+        callback,
+        t("select_devices", months=PLANS[plan]["months"]),
+        reply_markup=devices_kb(
+            plan, t, callback_prefix=f"dealer:renewdevices:{sub_id}:",
+            callback_suffix=f":{page}", back_callback=f"dealer:renew:{sub_id}:{page}",
+            dealer_price=True,
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("dealer:renewdevices:"))
+async def dealer_subscription_renew_devices(callback: types.CallbackQuery, t, lang, db_user):
+    if not await _dealer_only(callback, db_user, t):
+        return
+    parts = callback.data.split(":")
+    sub_id = int(parts[2])
+    plan = parts[3]
+    page = int(parts[4]) if len(parts) > 4 else 0
+    sub = await db_repo.get_dealer_subscription(db_user.id, sub_id)
+    if sub is None or plan not in PLANS or plan == "test":
+        await callback.answer(strip_custom_emoji_tags(t("invalid_data")), show_alert=True)
+        return
     price = _dealer_price(plan)
     traffic = int(PLANS[plan]["traffic_gb"])
     await callback.answer()
@@ -475,6 +525,7 @@ async def dealer_subscription_renew_plan(callback: types.CallbackQuery, t, lang,
         t(
             "dealer_renew_review", id=sub_id, name=h(sub.client_name),
             traffic=traffic, days=PLANS[plan]["days"],
+            devices=PLANS[plan]["devices"],
             price="$" + format(price, ".3f"),
         ),
         reply_markup=dealer_renew_confirm_kb(sub_id, plan, page, t=t),
@@ -518,7 +569,7 @@ async def dealer_subscription_renew_confirm(callback: types.CallbackQuery, t, la
         current = await provider.get_client(sub.xui_email)
         if current is None:
             raise RuntimeError("managed client not found in VPN provider")
-        expire_at = await grant_monthly(provider, sub.xui_email, int(tariff["days"]))
+        expire_at = await grant_monthly(provider, sub.xui_email, int(tariff["days"]), limit_ip=tariff["devices"])
         ok = await db_repo.complete_dealer_subscription_renewal(
             db_user.id,
             sub.id,

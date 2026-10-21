@@ -1,19 +1,25 @@
 """Retail prices in USD. Legacy products are kept only for existing orders."""
+from decimal import Decimal, ROUND_HALF_UP
 from math import ceil, floor
 from app.config import settings
 
 TEST_TARIFF = "test"
 DEFAULT_PLAN = "month1"
 TRAFFIC_TOPUP = "traffic50"
-# Prepaid terms: $1 + $0.90 + $0.81; each next month costs 10% less.
+DURATION_PLANS = ("month1", "month2", "month3")
+# Each next prepaid month costs 10% less; round the total once to cents.
 PLANS: dict[str, dict] = {
     "test": {"days": 1, "price_usd": 0, "price_toman": 0, "traffic_gb": 1},
     **{
-        f"month{months}": {
-            "months": months, "days": months * 30, "price_usd": price_usd,
+        (f"month{months}" if devices == 1 else f"month{months}d{devices}"): {
+            "months": months, "days": months * 30, "devices": devices,
+            "price_usd": float((Decimal(base_price) * Decimal(factor)).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP,
+            )),
             "traffic_gb": 100, "monthly": True,
         }
-        for months, price_usd in ((1, 1.0), (2, 1.90), (3, 2.71))
+        for months, factor in ((1, "1"), (2, "1.90"), (3, "2.71"))
+        for devices, base_price in ((1, "1"), (2, "1.50"), (3, "1.70"))
     },
 }
 TRAFFIC_PACKAGES = {
@@ -38,6 +44,18 @@ def get_tariff(plan: str) -> dict:
 
 def is_sale_product(plan: str) -> bool:
     return plan in PLANS or plan in TRAFFIC_PACKAGES
+
+
+def get_period_plan(plan: str) -> str:
+    tariff = PLANS[plan]
+    if not tariff.get("monthly"):
+        raise ValueError("A monthly plan is required")
+    return f"month{tariff['months']}"
+
+
+def get_device_plans(plan: str) -> tuple[str, str, str]:
+    period = get_period_plan(plan)
+    return period, f"{period}d2", f"{period}d3"
 
 
 def _validate_toman_rate(rate: float) -> float:
@@ -93,10 +111,10 @@ def get_plan_button_text(plan: str, lang: str, rub_per_usd: float = 90.0) -> str
     traffic = tariff["traffic_gb"]
     price = get_price_display(plan, lang, rub_per_usd)
     if lang == "fa":
-        return f"🕒 {str(months).translate(_FA_DIGITS)} ماه | {str(traffic).translate(_FA_DIGITS)} گیگ در ماه — {price}"
+        return f"🕒 {str(months).translate(_FA_DIGITS)} ماه | {str(traffic).translate(_FA_DIGITS)} گیگ در ماه — از {price}"
     if lang == "ru":
-        return f"🕒 {months} мес | {traffic} ГБ/мес — {price}"
-    return f"🕒 {months} month{'s' if months != 1 else ''} | {traffic} GB/month — {price}"
+        return f"🕒 {months} мес | {traffic} ГБ/мес — от {price}"
+    return f"🕒 {months} month{'s' if months != 1 else ''} | {traffic} GB/month — from {price}"
 
 
 def get_dealer_debit_usd(plan: str, toman_per_usd: float, dealer_discount: float = 0.5) -> float:

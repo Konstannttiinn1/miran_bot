@@ -177,7 +177,7 @@ async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMCont
     if sub is None or sub.expire_at <= now:
         with_test = await db_repo.can_claim_test(db_user.id)
         await state.set_state(Purchase.choosing_plan)
-        await state.update_data(plans_with_test=with_test)
+        await state.update_data(plans_with_test=with_test, plan=None, order_id=None)
         screen_text = t("select_plan")
         if sub is not None:
             screen_text = (
@@ -204,7 +204,7 @@ async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMCont
 @router.callback_query(F.data == "menu:buy")
 async def buy(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     await state.set_state(Purchase.choosing_plan)
-    await state.update_data(plans_with_test=False)
+    await state.update_data(plans_with_test=False, plan=None, order_id=None)
     await callback.answer()
     await send_with_logo(callback, t("select_plan"), reply_markup=plans_kb(t, with_test=False, lang=lang))
 

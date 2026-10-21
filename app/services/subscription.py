@@ -46,7 +46,7 @@ async def _grant_vpn(user_id: int, telegram_id: int, plan: str) -> tuple[str, ob
     provider = get_vpn_provider()
     panel_expiry = None
     if tariff.get("monthly"):
-        panel_expiry = await grant_monthly(provider, email, days)
+        panel_expiry = await grant_monthly(provider, email, days, limit_ip=tariff["devices"])
     elif plan != TEST_TARIFF and await is_monthly(email):
         # Honor pending legacy payments without erasing a monthly allowance.
         await provider.extend_client(email, days)
