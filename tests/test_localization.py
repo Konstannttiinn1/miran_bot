@@ -106,7 +106,7 @@ def test_all_dealer_keyboards_use_the_selected_language(lang, monkeypatch):
         for keyboard in keyboards:
             assert "$" not in keyboard_text(keyboard)
         intro = get_plan_intro(t, lang)
-        assert "۱۵۰٬۰۰۰ تومان" in intro and "۲۷۰٬۰۰۰ تومان" in intro
+        assert "۱۵۰٬۰۰۰ تومان" in intro and "۲۵۵٬۰۰۰ تومان" in intro
         assert "$" not in intro and "{price" not in intro
     else:
         assert "$0.500" in keyboard_text(keyboards[0])

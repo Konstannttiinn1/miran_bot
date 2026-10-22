@@ -16,12 +16,12 @@ from app.utils.tariffs import PLANS, get_dealer_debit_usd, get_price_display, ge
 EXPECTED_PRICES = {
     "month1": 1, "month2": 1.90, "month3": 2.70,
     "month1d2": 1.50, "month2d2": 2.85, "month3d2": 4.05,
-    "month1d3": 1.80, "month2d3": 3.42, "month3d3": 4.86,
+    "month1d3": 1.70, "month2d3": 3.23, "month3d3": 4.59,
 }
 EXPECTED_TOMAN = {
     "month1": 150000, "month2": 285000, "month3": 405000,
     "month1d2": 225000, "month2d2": 427500, "month3d2": 607500,
-    "month1d3": 270000, "month2d3": 513000, "month3d3": 729000,
+    "month1d3": 255000, "month2d3": 484500, "month3d3": 688500,
 }
 
 
@@ -39,7 +39,7 @@ def test_exact_price_list_and_derived_payment_amounts(monkeypatch):
         monkeypatch.setattr(settings, "toman_per_usd", rate)
         assert get_usd_price("month1") == 1
         assert get_usd_price("month3d2") == 4.05
-        assert get_usd_price("month3d3") == 4.86
+        assert get_usd_price("month3d3") == 4.59
         assert get_usd_price("traffic50") == 0.5
         assert get_price_display("month1", "fa") == displayed
     monkeypatch.setattr(settings, "toman_per_usd", 150000)
