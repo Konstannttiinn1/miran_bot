@@ -903,6 +903,23 @@ async def get_order(order_id: int) -> Order | None:
         return await session.get(Order, order_id)
 
 
+async def list_user_orders(
+    user_id: int, page: int = 0, per_page: int = 5,
+) -> tuple[list[Order], int, int]:
+    """Read one user's non-trial orders, newest first, and clamp stale pages."""
+    per_page = max(1, min(per_page, 20))
+    filters = (Order.user_id == user_id, Order.plan != "test")
+    async with async_session_factory() as session:
+        total = int(await session.scalar(select(func.count()).select_from(Order).where(*filters)) or 0)
+        page = max(0, min(page, max(0, (total - 1) // per_page)))
+        result = await session.execute(
+            select(Order).where(*filters)
+            .order_by(Order.created_at.desc(), Order.id.desc())
+            .offset(page * per_page).limit(per_page)
+        )
+        return list(result.scalars().all()), total, page
+
+
 async def claim_payment_order(order_id: int, status: str, external_id: str | None = None) -> bool:
     """A payment is fulfilled once even with duplicate events or two workers."""
     values = {"status": status}
