@@ -142,6 +142,9 @@ async def show_user(msg: types.Message, t, lang, db_user, state: FSMContext):
 
 @router.callback_query(F.data.startswith("admin_user:"))
 async def open_user(cb: types.CallbackQuery, t, lang, db_user):
+    if cb.from_user.id not in settings.admin_list:
+        await cb.answer("Нет доступа", show_alert=True)
+        return
     tg_id = int(cb.data.split(":")[1])
     user = await db_repo.get_user_by_tg(tg_id)
     if user is None:

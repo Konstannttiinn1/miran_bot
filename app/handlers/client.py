@@ -3,7 +3,7 @@ from html import escape as h
 
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
-from aiogram.types import InlineKeyboardMarkup, LabeledPrice
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 
 from app.bot import bot
 from app.config import settings
@@ -439,8 +439,28 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
         except Exception:
             log.exception("Не удалось уведомить дилера %s", d.telegram_id)
 
+    sender = getattr(message, "from_user", None)
+    name = h(sender.full_name) if sender else "Имя не передано"
+    username = f"@{h(db_user.username)}" if db_user.username else "не указан"
+    client_amount = (
+        _format_toman(client_price, "ru")
+        if known_client_price else get_text("ru", "dealer_original_amount")
+    )
     await notify_admins(
-        f"📎 Новый чек по заказу #{order_id} от {db_user.username or db_user.telegram_id}"
+        f"📎 Новый чек по заказу #{order_id}\n"
+        f"👤 Покупатель: {name}\n"
+        f"Username: {username}\n"
+        f"🆔 Telegram ID: <code>{db_user.telegram_id}</code>\n"
+        f"📦 Тариф: {_product_label(plan, 'ru')}\n"
+        f"💵 Сумма по реквизитам: {client_amount}\n"
+        f"💳 Спишется с баланса дилера: {_format_usd(dealer_price_usd)}\n"
+        "⏳ Статус: ожидает проверки дилером.",
+        photo=photo,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="👤 Открыть пользователя", callback_data=f"admin_user:{db_user.telegram_id}",
+            ),
+        ]]),
     )
 
 
