@@ -4,6 +4,7 @@ from aiogram.fsm.state import State, StatesGroup
 class Purchase(StatesGroup):
     """Состояния процесса покупки нового тарифа."""
     choosing_plan = State()
+    choosing_devices = State()
     choosing_payment = State()
     waiting_receipt = State()
 

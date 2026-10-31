@@ -40,9 +40,9 @@ class Settings(BaseSettings):
     heleket_enabled: bool = False
 
     # Курсы / Telegram Stars
-    # Розничная цена хранится в туманах, остальные валюты считаются от неё.
+    # Розничная цена новых тарифов в USD; туманы для перевода дилеру считаются по курсу.
     rub_per_usd: float = 90.0
-    toman_per_usd: float = 235000.0
+    toman_per_usd: float = 150000.0
     stars_reward_usd: float = 0.013
 
     # Дилер: внутренний баланс всегда в USD
@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # Языки и оформление
     available_langs: str = "fa,en,ru"
     use_custom_emoji: bool = False
+
+    # Mini App is served by a separate loopback web service behind HTTPS.
+    analytics_webapp_url: str = ""
+    analytics_init_data_max_age: int = 3600
 
     @property
     def admin_list(self) -> list[int]:

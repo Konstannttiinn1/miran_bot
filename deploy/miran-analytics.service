@@ -1,0 +1,20 @@
+[Unit]
+Description=Miran bot analytics Mini App
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/miran_bot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/root/miran_bot/venv/bin/python -m uvicorn app.webapp:app --host 127.0.0.1 --port 8091 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=120
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

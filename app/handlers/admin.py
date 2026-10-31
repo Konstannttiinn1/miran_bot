@@ -7,6 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import settings
+from app.handlers.admin_orders import router as orders_router
 from app.keyboards.builders import admin_menu_kb, raw_btn
 from app.middlewares.i18n import I18nMiddleware
 from app.repositories import db_repo
@@ -18,6 +19,7 @@ log = logging.getLogger(__name__)
 router = Router()
 router.message.middleware(I18nMiddleware())
 router.callback_query.middleware(I18nMiddleware())
+router.include_router(orders_router)
 
 PER_PAGE = 10
 BACK_ADMIN = "🔙 Назад"
@@ -49,6 +51,7 @@ async def user_card_text(user) -> str:
 
 def user_actions_kb(tg_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [raw_btn("💳 Оплаты", f"admin_payments:{tg_id}:0")],
         [raw_btn("➕7 дней", f"admin_act:add7:{tg_id}"),
          raw_btn("➖7 дней", f"admin_act:sub7:{tg_id}")],
         [raw_btn("🔄 Сбросить ссылку", f"admin_act:reset:{tg_id}")],
@@ -142,6 +145,9 @@ async def show_user(msg: types.Message, t, lang, db_user, state: FSMContext):
 
 @router.callback_query(F.data.startswith("admin_user:"))
 async def open_user(cb: types.CallbackQuery, t, lang, db_user):
+    if cb.from_user.id not in settings.admin_list:
+        await cb.answer("Нет доступа", show_alert=True)
+        return
     tg_id = int(cb.data.split(":")[1])
     user = await db_repo.get_user_by_tg(tg_id)
     if user is None:

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>ORION · Аналитика</title>
+  <meta name="description" content="Продажи, пользователи и рекламные кампании ORION.">
+  <script src="https://telegram.org/js/telegram-web-app.js?64"></script>
+  <link rel="stylesheet" href="./assets/analytics.css">
+  <script src="./assets/analytics.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="ORION"><span class="brand-mark" aria-hidden="true">O<span></span></span><span>ORION<span class="brand-sub" id="brand-sub">Аналитика</span></span></a>
+      <div class="top-actions"><span class="role" id="role" hidden></span><button class="icon-button" id="refresh" type="button" aria-label="Обновить" hidden><svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M5.5 8a7 7 0 0 1 11.6-3L20 8M4 16l2.9 3A7 7 0 0 0 18.5 16"/></svg></button></div>
+    </header>
+    <main id="main" aria-live="polite"><section class="welcome"><div class="loading-ring"></div><h1>ORION</h1><p>…</p></section></main>
+    <nav class="bottom-nav" id="nav" aria-label="Разделы аналитики" hidden>
+      <button type="button" data-tab="overview"><svg viewBox="0 0 24 24"><path d="M4 19V10m8 9V5m8 14v-7"/></svg><span>Сводка</span></button>
+      <button type="button" data-tab="users"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/><circle cx="9" cy="7" r="4"/></svg><span>Пользователи</span></button>
+      <button type="button" data-tab="campaigns"><svg viewBox="0 0 24 24"><path d="m3 10 15-6v16L3 14v-4Zm4 6 1 5h4l-2-4m11-8v6"/></svg><span>Кампании</span></button>
+    </nav>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <dialog id="campaign-dialog" aria-labelledby="dialog-title">
+      <form id="campaign-form">
+        <div class="dialog-header"><h2 id="dialog-title">Новая кампания</h2><button class="icon-button" id="close-dialog" type="button" aria-label="Закрыть">×</button></div>
+        <label for="campaign-name" id="name-label">Название</label>
+        <input id="campaign-name" name="name" maxlength="80" required autocomplete="off" placeholder="Например, канал · ноябрь">
+        <p class="muted" id="campaign-hint">Одна ссылка для одного размещения.</p>
+        <p class="form-error" id="form-error" role="alert" hidden></p>
+        <button class="primary-button" id="create-campaign" type="submit">Создать ссылку</button>
+        <div id="created-link" hidden><label for="link-value" id="link-label">Рекламная ссылка</label><input id="link-value" readonly dir="ltr"><button class="secondary-button" id="copy-created" type="button">Скопировать ссылку</button></div>
+      </form>
+    </dialog>
+  </div>
+</body>
+</html>
