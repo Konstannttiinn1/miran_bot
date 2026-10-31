@@ -1,4 +1,6 @@
-from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
+from urllib.parse import urlsplit
+
+from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from app.config import settings
 from app.middlewares.i18n import get_text
@@ -121,7 +123,7 @@ def back_kb(t, callback_data: str) -> InlineKeyboardMarkup:
 
 
 def dealer_menu_kb(t) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = [
         [_btn(t, "dealer_btn_test", "dealer:test_link")],
         [_btn(t, "dealer_btn_tests", "dealer:tests")],
         [_btn(t, "dealer_btn_promos", "dealer:promos")],
@@ -130,7 +132,11 @@ def dealer_menu_kb(t) -> InlineKeyboardMarkup:
         [_btn(t, "btn_dealer_balance", "dealer:balance")],
         [_btn(t, "btn_dealer_history", "dealer:history")],
         [_btn(t, "btn_lang", "menu:lang")],
-    ])
+    ]
+    analytics = analytics_button(t("btn_analytics"))
+    if analytics:
+        rows.insert(0, [analytics])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _translator(t):
@@ -274,8 +280,23 @@ def dealer_confirm_kb(order_id: int) -> InlineKeyboardMarkup:
 
 
 def admin_menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = [
         [raw_btn("👥 Пользователи", "admin:users")],
         [raw_btn("🤝 Дилеры", "admin:dealers")],
         [raw_btn("📊 Логи", "admin:logs")],
-    ])
+    ]
+    analytics = analytics_button("📈 Аналитика")
+    if analytics:
+        rows.insert(0, [analytics])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def analytics_button(text: str):
+    url = settings.analytics_webapp_url.strip()
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
+        return None
+    return InlineKeyboardButton(text=strip_custom_emoji_tags(text), web_app=WebAppInfo(url=url.rstrip("/") + "/"))

@@ -200,6 +200,8 @@ async def complete_dealer_order(order_id: int, dealer_id: int) -> bool:
                     details={"amount": float(order.amount)},
                 )
             )
+            from app.repositories.analytics_repo import record_order_sale
+            await record_order_sale(session, order)
             return True
 
 
@@ -423,8 +425,7 @@ async def complete_dealer_subscription_purchase(
             sub.expire_at = expire_at
             sub.traffic_limit_gb = traffic_gb
             sub.status = "active"
-            session.add(
-                DealerLog(
+            entry = DealerLog(
                     dealer_id=dealer_id,
                     action="dealer_sub_purchase",
                     details={
@@ -432,9 +433,11 @@ async def complete_dealer_subscription_purchase(
                         "plan": sub.plan,
                         "amount_usd": float(sub.price_paid_usd),
                     },
-                )
             )
+            session.add(entry)
             await session.flush()
+            from app.repositories.analytics_repo import dealer_log_key, record_managed_sale
+            await record_managed_sale(session, sub, dealer_id, sub.price_paid_usd, dealer_log_key(entry))
             return sub
 
 
@@ -666,6 +669,8 @@ async def complete_dealer_subscription_renewal(
                 sub.traffic_limit_gb = traffic_gb
             sub.status = "active"
             entry.action = "dealer_sub_renew"
+            from app.repositories.analytics_repo import dealer_log_key, record_managed_sale
+            await record_managed_sale(session, sub, dealer_id, (entry.details or {})["amount_usd"], dealer_log_key(entry))
             return True
 
 
@@ -889,10 +894,14 @@ async def update_subscription(user_id: int, **fields) -> None:
             await session.commit()
 
 
-async def create_order(user_id: int, plan: str, amount: float, currency: str, order_type: str = "purchase") -> Order:
+async def create_order(user_id: int, plan: str, amount: float, currency: str, order_type: str = "purchase", *, retail_toman: int | None = None) -> Order:
     async with async_session_factory() as session:
         order = Order(user_id=user_id, plan=plan, amount=amount, currency=currency, order_type=order_type)
         session.add(order)
+        await session.flush()
+        if retail_toman is not None:
+            from app.repositories.analytics_repo import save_quote
+            await save_quote(session, order, retail_toman)
         await session.commit()
         await session.refresh(order)
         return order
@@ -929,6 +938,9 @@ async def claim_payment_order(order_id: int, status: str, external_id: str | Non
         result = await session.execute(
             update(Order).where(Order.id == order_id, Order.status == "pending").values(**values)
         )
+        if result.rowcount == 1 and status in ("stars_paid_processing", "crypto_paid_processing"):
+            from app.repositories.analytics_repo import record_order_sale
+            await record_order_sale(session, await session.get(Order, order_id))
         await session.commit()
         return result.rowcount == 1
 

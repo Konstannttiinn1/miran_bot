@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     available_langs: str = "fa,en,ru"
     use_custom_emoji: bool = False
 
+    # Mini App is served by a separate loopback web service behind HTTPS.
+    analytics_webapp_url: str = ""
+    analytics_init_data_max_age: int = 3600
+
     @property
     def admin_list(self) -> list[int]:
         return [int(x) for x in self.admin_ids.split(",") if x.strip().isdigit()]

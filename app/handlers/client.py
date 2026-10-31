@@ -239,7 +239,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
             settings.dealer_discount,
         )
         # order.amount для дилерского заказа всегда хранится в USD.
-        order = await db_repo.create_order(db_user.id, plan, dealer_usd, "usd", order_type=order_type)
+        order = await db_repo.create_order(db_user.id, plan, dealer_usd, "usd", order_type=order_type, retail_toman=retail_toman)
         await state.update_data(plan=plan, order_id=order.id, retail_toman=retail_toman)
         await state.set_state(Purchase.waiting_receipt)
         await send_with_logo(
@@ -415,6 +415,10 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
             client_price / settings.toman_per_usd * settings.dealer_discount, 3,
         )
         known_client_price = abs(current_debit - dealer_price_usd) < 1e-9
+
+    if known_client_price:
+        from app.repositories.analytics_repo import preserve_quote
+        await preserve_quote(order, client_price)
 
     dealers = await db_repo.list_dealers()
     for d in dealers:

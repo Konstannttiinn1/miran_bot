@@ -1,6 +1,7 @@
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Integer, JSON, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -103,6 +104,66 @@ class DealerLog(Base):
     order_id: Mapped[int | None] = mapped_column(nullable=True)
     details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class AdvertisingCampaign(Base):
+    __tablename__ = "advertising_campaigns"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True)
+    name: Mapped[str] = mapped_column(String(80))
+    owner_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class CampaignVisit(Base):
+    __tablename__ = "campaign_visits"
+    __table_args__ = (UniqueConstraint("campaign_id", "telegram_id", name="uq_campaign_visitor"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("advertising_campaigns.id"), index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    arrived_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class CampaignAttribution(Base):
+    __tablename__ = "campaign_attributions"
+
+    telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("advertising_campaigns.id"), index=True)
+    arrived_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class OrderPriceSnapshot(Base):
+    __tablename__ = "order_price_snapshots"
+
+    order_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    retail_toman: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class AnalyticsSale(Base):
+    """Confirmed sales, retained when operational user/order records are deleted."""
+
+    __tablename__ = "analytics_sales"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_key: Mapped[str] = mapped_column(String(128), unique=True)
+    order_id: Mapped[int | None] = mapped_column(index=True, nullable=True)
+    user_telegram_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    dealer_telegram_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    managed_subscription_id: Mapped[int | None] = mapped_column(index=True, nullable=True)
+    managed_created_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    customer_name: Mapped[str] = mapped_column(String, default="")
+    campaign_id: Mapped[int | None] = mapped_column(ForeignKey("advertising_campaigns.id"), index=True, nullable=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    plan: Mapped[str] = mapped_column(String)
+    amount: Mapped[Decimal] = mapped_column(Numeric(24, 8))
+    currency: Mapped[str] = mapped_column(String(12))
+    retail_toman: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    confirmed_at: Mapped[datetime] = mapped_column(index=True)
+    time_estimated: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class DealerTest(Base):

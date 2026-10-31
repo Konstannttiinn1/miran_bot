@@ -38,6 +38,9 @@ async def cmd_start(message: types.Message, t, lang, db_user):
         await send_with_logo(message, t("dealer_menu_text"), reply_markup=dealer_menu_kb(t))
         return
 
+    from app.repositories.analytics_repo import track_start
+    await track_start(db_user, getattr(message, "text", "") or "")
+
     if not db_user.lang_selected:
         await send_with_logo(message, t("start_msg"), reply_markup=language_kb())
         return

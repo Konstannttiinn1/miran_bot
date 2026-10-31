@@ -24,3 +24,6 @@ async def init_db() -> None:
             GROUP BY users.telegram_id
             ON CONFLICT (telegram_id) DO NOTHING
         """))
+
+    from app.repositories.analytics_repo import backfill_sales
+    await backfill_sales()

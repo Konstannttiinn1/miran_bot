@@ -5,6 +5,7 @@
   "btn_my_vpn": "🛒 خرید VPN",
   "btn_support": "🆘 پشتیبانی",
   "btn_lang": "🌐 زبان",
+  "btn_analytics": "📈 آمار",
   "no_subscription": "❌ شما اشتراک فعال ندارید.",
   "buy_coming_soon": "🛒 بخش خرید به‌زودی فعال می‌شود.",
   "active_subscription": "<b>ORION_VPN</b> 🌐\n✅ اشتراک شما فعال است.\n📅 تا تاریخ: {expire_date}\n📊 ترافیک: {traffic} گیگابایت",
