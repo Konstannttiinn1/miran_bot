@@ -284,6 +284,7 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
     rows = [
         [raw_btn("👥 Пользователи", "admin:users")],
         [raw_btn("🤝 Дилеры", "admin:dealers")],
+        [raw_btn("🎟️ Промокоды", "admin:promos")],
         [raw_btn("📊 Логи", "admin:logs")],
     ]
     analytics = analytics_button("📈 Аналитика")
