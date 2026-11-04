@@ -919,8 +919,10 @@ async def create_order(
                         PromoRedemption.order_id.is_(None),
                         PromoCode.kind.in_(("discount", "days_discount")),
                         PromoCode.discount_percent > 0,
+                        PromoCode.is_active.is_(True),
+                        PromoCode.expire_at > utcnow(),
                     )
-                    .order_by(PromoRedemption.id.asc())
+                    .order_by(PromoRedemption.id.desc())
                     .limit(1)
                     .with_for_update(of=PromoRedemption)
                 )
