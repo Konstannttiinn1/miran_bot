@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import time
 from html import escape as h
 
 from aiogram import F, Router, types
@@ -20,6 +22,8 @@ from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
 
 log = logging.getLogger(__name__)
+_link_reset_lock = asyncio.Lock()
+_link_reset_recent: dict[int, float] = {}
 router = Router()
 router.message.middleware(I18nMiddleware())
 router.callback_query.middleware(I18nMiddleware())
@@ -269,12 +273,25 @@ async def reset_link_confirm(callback: types.CallbackQuery, t, db_user):
     ):
         await callback.answer(strip_custom_emoji_tags(t("reset_link_unavailable")), show_alert=True)
         return
-    try:
-        link = await reset_link(db_user)
-    except Exception:
-        log.exception("User link reset failed for %s", db_user.telegram_id)
-        await callback.answer(strip_custom_emoji_tags(t("reset_link_failed")), show_alert=True)
-        return
+    # Serialize fast repeated confirmations. Without this, the second revoke
+    # would immediately invalidate the new URL delivered by the first.
+    async with _link_reset_lock:
+        recent = _link_reset_recent.get(db_user.telegram_id)
+        if recent is not None and time.monotonic() - recent < 60:
+            await callback.answer(strip_custom_emoji_tags(t("reset_link_recent")), show_alert=True)
+            return
+        try:
+            link = await reset_link(db_user)
+        except Exception:
+            log.exception("User link reset failed for %s", db_user.telegram_id)
+            await callback.answer(strip_custom_emoji_tags(t("reset_link_failed")), show_alert=True)
+            return
+        _link_reset_recent[db_user.telegram_id] = time.monotonic()
+        if len(_link_reset_recent) > 1000:
+            cutoff = time.monotonic() - 120
+            for user_id, stamp in list(_link_reset_recent.items()):
+                if stamp < cutoff:
+                    _link_reset_recent.pop(user_id, None)
     await callback.answer()
     await send_with_logo(
         callback, t("reset_link_success", link=h(link)),
