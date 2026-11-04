@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -20,6 +19,7 @@ from app.database.models import (
     User,
     utcnow,
 )
+from app.utils.promo_pricing import discounted_amount, discounted_toman
 
 async def get_or_create_user(telegram_id: int, username: str | None = None) -> User:
     async with async_session_factory() as session:
@@ -897,6 +897,27 @@ async def update_subscription(user_id: int, **fields) -> None:
             await session.commit()
 
 
+async def get_active_purchase_promo(user_id: int) -> PromoCode | None:
+    """Return the latest activated, not-yet-bound subscription discount."""
+    async with async_session_factory() as session:
+        return (
+            await session.execute(
+                select(PromoCode)
+                .join(PromoRedemption, PromoRedemption.promo_id == PromoCode.id)
+                .where(
+                    PromoRedemption.user_id == user_id,
+                    PromoRedemption.order_id.is_(None),
+                    PromoCode.kind.in_(("discount", "days_discount")),
+                    PromoCode.discount_percent > 0,
+                    PromoCode.is_active.is_(True),
+                    PromoCode.expire_at > utcnow(),
+                )
+                .order_by(PromoRedemption.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+
 async def create_order(
     user_id: int, plan: str, amount: float, currency: str,
     order_type: str = "purchase", *, retail_toman: int | None = None,
@@ -929,24 +950,9 @@ async def create_order(
                 coupon = row.first()
                 if coupon:
                     redemption, promo = coupon
-                    multiplier = Decimal(100 - promo.discount_percent) / Decimal(100)
-                    if currency.lower() == "xtr":
-                        amount = max(1, int(
-                            (Decimal(str(amount)) * multiplier).to_integral_value(rounding=ROUND_CEILING)
-                        ))
-                    else:
-                        amount = float(max(
-                            Decimal("0.001"),
-                            (Decimal(str(amount)) * multiplier).quantize(
-                                Decimal("0.001"), rounding=ROUND_HALF_UP
-                            ),
-                        ))
+                    amount = discounted_amount(amount, promo.discount_percent, currency)
                     if retail_toman is not None:
-                        retail_toman = max(1, int(
-                            (Decimal(retail_toman) * multiplier).to_integral_value(
-                                rounding=ROUND_HALF_UP
-                            )
-                        ))
+                        retail_toman = discounted_toman(retail_toman, promo.discount_percent)
 
             order = Order(
                 user_id=user_id, plan=plan, amount=amount,
