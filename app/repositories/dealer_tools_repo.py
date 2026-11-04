@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 
 from app.database.engine import async_session_factory
-from app.database.models import DealerTest, PromoCode, PromoRedemption, utcnow
+from app.database.models import DealerTest, PromoCode, PromoRedemption, User, utcnow
 
 
 async def create_dealer_test(
@@ -190,6 +190,45 @@ async def deactivate_promo(dealer_id: int, promo_id: int) -> bool:
         result = await session.execute(
             select(PromoCode)
             .where(PromoCode.id == promo_id, PromoCode.dealer_id == dealer_id)
+            .with_for_update()
+        )
+        promo = result.scalar_one_or_none()
+        if promo is None or not promo.is_active:
+            return False
+        promo.is_active = False
+        await session.commit()
+        return True
+
+
+async def list_all_promos(
+    page: int = 0,
+    per_page: int = 5,
+) -> tuple[list[tuple[PromoCode, User | None]], int]:
+    """Administrator view: every promo with its creator, including dealer codes."""
+    async with async_session_factory() as session:
+        total = await session.scalar(select(func.count()).select_from(PromoCode))
+        result = await session.execute(
+            select(PromoCode, User)
+            .outerjoin(User, PromoCode.dealer_id == User.id)
+            .order_by(PromoCode.created_at.desc(), PromoCode.id.desc())
+            .offset(max(0, page) * per_page)
+            .limit(per_page)
+        )
+        return list(result.all()), int(total or 0)
+
+
+async def get_any_promo(promo_id: int) -> PromoCode | None:
+    """No owner filtering; call exclusively behind an admin authorization check."""
+    async with async_session_factory() as session:
+        return await session.get(PromoCode, promo_id)
+
+
+async def deactivate_any_promo(promo_id: int) -> bool:
+    """Admin-only operation; route checks admin identity before calling this."""
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(PromoCode)
+            .where(PromoCode.id == promo_id)
             .with_for_update()
         )
         promo = result.scalar_one_or_none()
