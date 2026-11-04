@@ -107,13 +107,15 @@ async def _record_limit(session, email: str, limit_bytes: int) -> None:
         )
 
 
-async def grant_monthly(provider, email: str, days: int, limit_ip: int = 1) -> datetime:
+async def grant_monthly(provider, email: str, days: int, limit_ip: int = 1, *, bonus_days: int = 0) -> datetime:
     """Sell time; an active monthly cycle is never reset by advance renewal."""
     from app.services.remnawave_api import RemnawaveClient
     if not isinstance(provider, RemnawaveClient):
         raise RuntimeError("Monthly subscriptions require the configured Remnawave provider")
     if days not in (30, 60, 90):
         raise ValueError("Unsupported monthly duration")
+    if not 0 <= bonus_days <= 365:
+        raise ValueError("Invalid promotional bonus days")
     if limit_ip not in (1, 2, 3):
         raise ValueError("Monthly device limit must be 1, 2 or 3")
 
@@ -121,7 +123,7 @@ async def grant_monthly(provider, email: str, days: int, limit_ip: int = 1) -> d
         user = await provider.get_client(email)
         now = utcnow()
         old_expiry = parse_time((user or {}).get("expireAt"))
-        expires = max(old_expiry or now, now) + timedelta(days=days)
+        expires = max(old_expiry or now, now) + timedelta(days=days + bonus_days)
         fresh_cycle = not quota.initialized or not old_expiry or old_expiry <= now
         if user and user.get("status") == "DISABLED":
             raise RuntimeError("Cannot sell a disabled VPN client")
