@@ -10,6 +10,8 @@ from app.handlers import start
 from app.middlewares.i18n import get_text
 from app.repositories import db_repo, dealer_tools_repo
 from app.services import subscription
+from app.utils.promo_pricing import discounted_amount
+from app.utils.tariffs import get_plan_intro, get_promo_price_display
 
 
 @pytest.mark.asyncio
@@ -127,3 +129,38 @@ async def test_link_reset_only_for_active_own_subscription(database, monkeypatch
     await start.reset_link_confirm(callback, t, user)
     reset.assert_not_awaited()
     screen.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_activated_coupon_is_visible_before_checkout_and_hidden_after(database):
+    admin = await db_repo.get_or_create_user(97001)
+    user = await db_repo.get_or_create_user(97002)
+    await dealer_tools_repo.create_promo(
+        admin.id, "VISIBLE30", "discount", 0, 0,
+        utcnow() + timedelta(days=7), 3, discount_percent=30,
+    )
+    assert (await dealer_tools_repo.reserve_promo_redemption(user.id, "VISIBLE30"))[0] == "reserved"
+
+    promo = await db_repo.get_active_purchase_promo(user.id)
+    assert promo is not None and promo.code == "VISIBLE30"
+    assert get_promo_price_display("month1", "ru", promo.discount_percent, markup=True) == (
+        "<s>$1.00</s> <b>$0.70</b>"
+    )
+    translated = lambda key, **kw: get_text("ru", key, **kw)
+    intro = get_plan_intro(translated, "ru", promo)
+    assert "VISIBLE30" in intro and "<s>$1.00</s>" in intro
+
+    order = await db_repo.create_order(user.id, "month1", 1.0, "usdt", apply_promo=True)
+    assert order.amount == 0.7
+    assert await db_repo.get_active_purchase_promo(user.id) is None
+
+
+def test_coupon_preview_matches_checkout_rounding_in_all_currencies():
+    assert discounted_amount(1.0, 30, "usdt") == 0.7
+    assert discounted_amount(4.59, 30, "usdt") == 3.213
+    assert discounted_amount(101, 30, "xtr") == 71
+    assert get_promo_price_display("month3d3", "en", 30, markup=True) == (
+        "<s>$4.59</s> <b>$3.213</b>"
+    )
+    fa_preview = get_promo_price_display("month1", "fa", 30, markup=True)
+    assert "<s>" in fa_preview and "</s> <b>" in fa_preview and "تومان" in fa_preview
