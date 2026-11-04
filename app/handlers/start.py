@@ -188,17 +188,21 @@ async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMCont
         with_test = await db_repo.can_claim_test(db_user.id)
         await state.set_state(Purchase.choosing_plan)
         await state.update_data(plans_with_test=with_test, plan=None, order_id=None)
-        screen_text = get_plan_intro(t, lang)
+        promo = await db_repo.get_active_purchase_promo(db_user.id)
+        screen_text = get_plan_intro(t, lang, promo)
         if sub is not None:
             screen_text = (
                 t("subscription_expired", expire_date=sub.expire_at.strftime("%d.%m.%Y"))
                 + "\n\n"
-                + get_plan_intro(t, lang)
+                + screen_text
             )
         await send_with_logo(
             callback,
             screen_text,
-            reply_markup=plans_kb(t, with_test=with_test, lang=lang),
+            reply_markup=plans_kb(
+                t, with_test=with_test, lang=lang,
+                discount_percent=promo.discount_percent if promo else 0,
+            ),
         )
         return
 
@@ -216,7 +220,14 @@ async def buy(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext
     await state.set_state(Purchase.choosing_plan)
     await state.update_data(plans_with_test=False, plan=None, order_id=None)
     await callback.answer()
-    await send_with_logo(callback, get_plan_intro(t, lang), reply_markup=plans_kb(t, with_test=False, lang=lang))
+    promo = await db_repo.get_active_purchase_promo(db_user.id)
+    await send_with_logo(
+        callback, get_plan_intro(t, lang, promo),
+        reply_markup=plans_kb(
+            t, with_test=False, lang=lang,
+            discount_percent=promo.discount_percent if promo else 0,
+        ),
+    )
 
 
 @router.callback_query(F.data == "menu:get_link")
