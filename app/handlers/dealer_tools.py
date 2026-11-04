@@ -360,7 +360,8 @@ async def test_disable(callback: types.CallbackQuery, t, db_user):
         return
     try:
         await get_vpn_provider().set_enabled(test.xui_email, False)
-        await dealer_tools_repo.set_dealer_test_status(db_user.id, test.id, "disabled")
+        if not await dealer_tools_repo.set_dealer_test_status(db_user.id, test.id, "disabled"):
+            raise RuntimeError("Test disable status was not persisted")
     except Exception:
         log.exception("Dealer test disable failed")
         await callback.answer(strip_custom_emoji_tags(t("dealer_action_failed")), show_alert=True)
@@ -384,7 +385,8 @@ async def test_delete(callback: types.CallbackQuery, t, db_user):
         return
     try:
         await get_vpn_provider().delete_client(test.xui_email)
-        await dealer_tools_repo.set_dealer_test_status(db_user.id, test.id, "deleted")
+        if not await dealer_tools_repo.set_dealer_test_status(db_user.id, test.id, "deleted"):
+            raise RuntimeError("Test deletion status was not persisted")
     except Exception:
         log.exception("Dealer test delete failed")
         await callback.answer(strip_custom_emoji_tags(t("dealer_action_failed")), show_alert=True)
@@ -426,7 +428,8 @@ async def test_extend_days(message: types.Message, t, db_user, state: FSMContext
     try:
         await get_vpn_provider().extend_client(test.xui_email, days)
         new_expire = max(test.expire_at, utcnow()) + timedelta(days=days)
-        await dealer_tools_repo.update_dealer_test_expiry(db_user.id, test.id, new_expire)
+        if not await dealer_tools_repo.update_dealer_test_expiry(db_user.id, test.id, new_expire):
+            raise RuntimeError("Test extension was not persisted")
     except Exception:
         log.exception("Dealer test extend failed")
         await message.answer(t("dealer_action_failed"))
