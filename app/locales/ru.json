@@ -199,5 +199,7 @@
   "select_devices": "<b>На сколько устройств?</b>\n📅 Выбранный срок: {months} мес.\n📦 Всего 100 ГБ каждые 30 дней на все устройства.\nВыбери 1, 2 или 3 устройства. На кнопках указана итоговая цена за весь срок.\n\nВыбранный лимит устройств применяется сразу после оплаты.",
   "device_option": "📱 {devices} устр. — {price}",
   "purchase_summary": "<b>Выбранная подписка</b>\n{product}\n💵 Итого за срок: <b>{price}</b>",
-  "subscription_devices": "📱 Устройств: {devices}"
+  "subscription_devices": "📱 Устройств: {devices}",
+  "promo_price_notice": "🎟️ <b>Промокод <code>{code}</code> применён: скидка {percent}%</b>",
+  "promo_price_bonus_days": "🎁 Дополнительно после оплаты: +{days} дн. к подписке."
 }
