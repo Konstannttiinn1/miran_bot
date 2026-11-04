@@ -108,7 +108,7 @@ async def test_link_reset_only_for_active_own_subscription(database, monkeypatch
     screen = AsyncMock()
     reset = AsyncMock(return_value="https://sub.example.invalid/new")
     monkeypatch.setattr(start, "send_with_logo", screen)
-    monkeypatch.setattr(start, "reset_link", reset)
+    monkeypatch.setattr(start, "reset_subscription_link", reset)
     subscription_data = SimpleNamespace(
         expire_at=utcnow() + timedelta(days=10),
         xui_email=str(user.telegram_id),
@@ -118,14 +118,12 @@ async def test_link_reset_only_for_active_own_subscription(database, monkeypatch
     t = lambda key, **kw: get_text("ru", key, **kw)
 
     await start.reset_link_confirm(callback, t, user)
-    reset.assert_awaited_once_with(user)
+    reset.assert_awaited_once_with(str(user.telegram_id))
     assert "new" in screen.call_args.args[1]
 
     reset.reset_mock()
     screen.reset_mock()
-    getter.return_value = SimpleNamespace(
-        expire_at=subscription_data.expire_at, xui_email="someone-else",
-    )
+    getter.return_value = None
     await start.reset_link_confirm(callback, t, user)
     reset.assert_not_awaited()
     screen.assert_not_awaited()
