@@ -19,6 +19,7 @@ from app.repositories import dealer_tools_repo
 from app.services.vpn_provider import get_vpn_provider, subscription_link
 from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
+from app.utils.notifications import notify_dealer_activity
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -93,16 +94,15 @@ def _test_card_kb(t, test, page: int, link: str | None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _promo_kind_kb(t, *, admin: bool = False) -> InlineKeyboardMarkup:
+def _promo_kind_kb(t) -> InlineKeyboardMarkup:
     rows = [
         [raw_btn(t("promo_kind_days"), "dealer:promo:kind:days")],
         [raw_btn(t("promo_kind_days_traffic"), "dealer:promo:kind:days_traffic")],
     ]
-    if admin:
-        rows.extend([
-            [raw_btn(t("promo_kind_discount"), "dealer:promo:kind:discount")],
-            [raw_btn(t("promo_kind_days_discount"), "dealer:promo:kind:days_discount")],
-        ])
+    rows.extend([
+        [raw_btn(t("promo_kind_discount"), "dealer:promo:kind:discount")],
+        [raw_btn(t("promo_kind_days_discount"), "dealer:promo:kind:days_discount")],
+    ])
     rows.append([raw_btn(t("btn_back"), "dealer:promos")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -272,6 +272,11 @@ async def test_confirm(callback: types.CallbackQuery, t, db_user, state: FSMCont
         return
 
     await state.clear()
+    await notify_dealer_activity(
+        db_user, "🧪 Выдан тестовый VPN-ключ",
+        f"Тест #{test.id} · клиент: {h(test.client_name)}\n"
+        f"Срок: {days} дн. · лимит: {traffic} ГБ",
+    )
     remaining = max(0, settings.dealer_test_daily_limit - used)
     await callback.message.answer(
         t("dealer_test_created", name=h(test.client_name), days=days, traffic=traffic, link=h(link), remaining=remaining, limit=settings.dealer_test_daily_limit),
@@ -360,6 +365,10 @@ async def test_disable(callback: types.CallbackQuery, t, db_user):
         log.exception("Dealer test disable failed")
         await callback.answer(strip_custom_emoji_tags(t("dealer_action_failed")), show_alert=True)
         return
+    await notify_dealer_activity(
+        db_user, "⛔ Тестовый VPN-ключ отключён",
+        f"Тест #{test.id} · {h(test.client_name)}",
+    )
     await callback.answer(strip_custom_emoji_tags(t("dealer_test_disabled")))
     await _show_tests(callback, t, db_user.id, int(raw_page))
 
@@ -380,6 +389,10 @@ async def test_delete(callback: types.CallbackQuery, t, db_user):
         log.exception("Dealer test delete failed")
         await callback.answer(strip_custom_emoji_tags(t("dealer_action_failed")), show_alert=True)
         return
+    await notify_dealer_activity(
+        db_user, "🗑️ Тестовый VPN-ключ удалён",
+        f"Тест #{test.id} · {h(test.client_name)}",
+    )
     await callback.answer(strip_custom_emoji_tags(t("dealer_test_deleted")))
     await _show_tests(callback, t, db_user.id, int(raw_page))
 
@@ -419,6 +432,11 @@ async def test_extend_days(message: types.Message, t, db_user, state: FSMContext
         await message.answer(t("dealer_action_failed"))
         return
     await state.clear()
+    await notify_dealer_activity(
+        db_user, "📅 Продлён тестовый VPN-ключ",
+        f"Тест #{test.id} · {h(test.client_name)}\n"
+        f"Добавлено: {days} дн. · до {new_expire:%d.%m.%Y}",
+    )
     await message.answer(t("dealer_test_extended", days=days, expire=new_expire.strftime("%d.%m.%Y")))
 
 
@@ -497,7 +515,7 @@ async def promo_code(message: types.Message, t, db_user, state: FSMContext):
     await state.set_state(DealerPromoForm.kind)
     await message.answer(
         t("promo_ask_kind"),
-        reply_markup=_promo_kind_kb(t, admin=db_user.telegram_id in settings.admin_list),
+        reply_markup=_promo_kind_kb(t),
     )
 
 
@@ -506,9 +524,7 @@ async def promo_kind(callback: types.CallbackQuery, t, db_user, state: FSMContex
     if not await _dealer(callback, db_user, t, allow_admin=True):
         return
     kind = callback.data.rsplit(":", 1)[-1]
-    allowed = {"days", "days_traffic"}
-    if db_user.telegram_id in settings.admin_list:
-        allowed |= {"discount", "days_discount"}
+    allowed = {"days", "days_traffic", "discount", "days_discount"}
     if kind not in allowed:
         await callback.answer(strip_custom_emoji_tags(t("access_denied")), show_alert=True)
         return
@@ -532,7 +548,7 @@ async def promo_kind(callback: types.CallbackQuery, t, db_user, state: FSMContex
 
 @router.message(DealerPromoForm.discount)
 async def promo_discount(message: types.Message, t, db_user, state: FSMContext):
-    if db_user.telegram_id not in settings.admin_list:
+    if db_user.role != "dealer" and db_user.telegram_id not in settings.admin_list:
         await state.clear()
         await message.answer(t("access_denied"))
         return
@@ -672,9 +688,6 @@ async def promo_confirm(callback: types.CallbackQuery, t, db_user, state: FSMCon
     if not await _dealer(callback, db_user, t, allow_admin=True):
         return
     data = await state.get_data()
-    if data.get("promo_kind") in {"discount", "days_discount"} and db_user.telegram_id not in settings.admin_list:
-        await callback.answer(strip_custom_emoji_tags(t("access_denied")), show_alert=True)
-        return
     try:
         promo = await dealer_tools_repo.create_promo(
             db_user.id, data["promo_code"], data["promo_kind"], int(data["promo_days"]),
@@ -686,6 +699,19 @@ async def promo_confirm(callback: types.CallbackQuery, t, db_user, state: FSMCon
         return
     await state.clear()
     await callback.answer()
+    benefits = []
+    if promo.discount_percent:
+        benefits.append(f"скидка {promo.discount_percent}%")
+    if promo.days:
+        benefits.append(f"+{promo.days} дн.")
+    if promo.traffic_gb:
+        benefits.append(f"+{promo.traffic_gb} ГБ")
+    await notify_dealer_activity(
+        db_user, "🎟️ Создан промокод",
+        f"Код: <code>{h(promo.code)}</code>\n"
+        f"Бонус: {', '.join(benefits)}\n"
+        f"Лимит: {promo.max_uses} активаций · до {promo.expire_at:%d.%m.%Y}",
+    )
     await send_with_logo(callback, t("promo_created", code=h(promo.code)), reply_markup=_promo_card_kb(t, promo, 0))
 
 
@@ -723,6 +749,11 @@ async def promo_disable(callback: types.CallbackQuery, t, db_user):
     if not await dealer_tools_repo.deactivate_promo(db_user.id, int(raw_id)):
         await callback.answer(strip_custom_emoji_tags(t("dealer_action_failed")), show_alert=True)
         return
+    promo = await dealer_tools_repo.get_dealer_promo(db_user.id, int(raw_id))
+    await notify_dealer_activity(
+        db_user, "⛔ Отключён промокод",
+        f"Код: <code>{h(promo.code)}</code>" if promo else f"Промокод #{raw_id}",
+    )
     await callback.answer(strip_custom_emoji_tags(t("promo_disabled")))
     await _show_promos(
         callback, t, db_user.id, int(raw_page),
