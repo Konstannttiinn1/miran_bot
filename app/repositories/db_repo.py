@@ -955,7 +955,18 @@ async def create_order(
             session.add(order)
             await session.flush()
             if coupon:
-                coupon[0].order_id = order.id
+                # Atomic compare-and-set also prevents duplicate claims with SQLite,
+                # where SELECT ... FOR UPDATE offers no row lock.
+                claim = await session.execute(
+                    update(PromoRedemption)
+                    .where(
+                        PromoRedemption.id == coupon[0].id,
+                        PromoRedemption.order_id.is_(None),
+                    )
+                    .values(order_id=order.id)
+                )
+                if claim.rowcount != 1:
+                    raise RuntimeError("Promo code already bound to another checkout")
             if retail_toman is not None:
                 from app.repositories.analytics_repo import save_quote
                 await save_quote(session, order, retail_toman)
