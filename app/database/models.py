@@ -183,15 +183,16 @@ class DealerTest(Base):
 
 
 class PromoCode(Base):
-    """Промокод дилера: дни либо дни + трафик."""
+    """Бонусы подписки или скидка на одну покупку."""
 
     __tablename__ = "promo_codes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     dealer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
-    kind: Mapped[str] = mapped_column(String(32))  # days / days_traffic
+    kind: Mapped[str] = mapped_column(String(32))  # days / days_traffic / discount / days_discount
     days: Mapped[int] = mapped_column(Integer)
+    discount_percent: Mapped[int] = mapped_column(Integer, default=0)
     traffic_gb: Mapped[int] = mapped_column(Integer, default=0)
     expire_at: Mapped[datetime] = mapped_column()
     max_uses: Mapped[int] = mapped_column(Integer)
@@ -211,4 +212,5 @@ class PromoRedemption(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     promo_id: Mapped[int] = mapped_column(ForeignKey("promo_codes.id"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # single checkout binding
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
