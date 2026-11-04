@@ -199,5 +199,7 @@
   "select_devices": "<b>How many devices?</b>\n📅 Selected term: {months} month(s).\n📦 100 GB total every 30 days, shared across all devices.\nChoose 1, 2 or 3 devices. Each button shows the total price for the full term.\n\nThe selected device limit applies immediately after payment.",
   "device_option": "📱 Devices: {devices} — {price}",
   "purchase_summary": "<b>Selected subscription</b>\n{product}\n💵 Total for the term: <b>{price}</b>",
-  "subscription_devices": "📱 Devices: {devices}"
+  "subscription_devices": "📱 Devices: {devices}",
+  "promo_price_notice": "🎟️ <b>Promo code <code>{code}</code> applied: {percent}% off</b>",
+  "promo_price_bonus_days": "🎁 After payment: +{days} bonus days on the subscription."
 }
