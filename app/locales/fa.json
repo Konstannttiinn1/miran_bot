@@ -201,5 +201,6 @@
   "purchase_summary": "<b>اشتراک انتخاب‌شده</b>\n{product}\n💵 مبلغ کل مدت: <b>{price}</b>",
   "subscription_devices": "📱 تعداد دستگاه‌ها: {devices}",
   "promo_price_notice": "🎟️ <b>کد تخفیف <code>{code}</code> فعال شد: {percent}٪ تخفیف</b>",
-  "promo_price_bonus_days": "🎁 پس از پرداخت: {days} روز هدیه به اعتبار اشتراک اضافه می‌شود."
+  "promo_price_bonus_days": "🎁 پس از پرداخت: {days} روز هدیه به اعتبار اشتراک اضافه می‌شود.",
+  "promo_owner": "👤 سازنده: {owner}"
 }

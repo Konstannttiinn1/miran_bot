@@ -443,14 +443,28 @@ async def test_extend_days(message: types.Message, t, db_user, state: FSMContext
     await message.answer(t("dealer_test_extended", days=days, expire=new_expire.strftime("%d.%m.%Y")))
 
 
+def _promo_owner_label(user, dealer_id: int) -> str:
+    if user is None:
+        return f"DB #{dealer_id}"
+    return f"@{user.username}" if user.username else f"ID {user.telegram_id}"
+
+
 async def _show_promos(callback, t, dealer_id: int, page: int, *, admin: bool = False) -> None:
     page = max(0, page)
-    items, total = await dealer_tools_repo.list_dealer_promos(dealer_id, page)
+    if admin:
+        all_items, total = await dealer_tools_repo.list_all_promos(page)
+        items = [(promo, owner) for promo, owner in all_items]
+    else:
+        dealer_items, total = await dealer_tools_repo.list_dealer_promos(dealer_id, page)
+        items = [(promo, None) for promo in dealer_items]
     pages = max(1, (total + 4) // 5)
-    rows = [[raw_btn(
-        f"{'🟢' if promo.is_active else '🔴'} {promo.code} · {promo.uses_count}/{promo.max_uses}",
-        f"dealer:promocard:{promo.id}:{page}",
-    )] for promo in items]
+    rows = []
+    for promo, owner in items:
+        status = "🟢" if promo.is_active else "🔴"
+        label = f"{status} {promo.code} · {promo.uses_count}/{promo.max_uses}"
+        if admin:
+            label += f" · {_promo_owner_label(owner, promo.dealer_id)[:24]}"
+        rows.append([raw_btn(label, f"dealer:promocard:{promo.id}:{page}")])
     nav = []
     if page:
         nav.append(raw_btn("⬅️", f"dealer:promos:{page - 1}"))
@@ -723,10 +737,19 @@ async def promo_card(callback: types.CallbackQuery, t, db_user):
     if not await _dealer(callback, db_user, t, allow_admin=True):
         return
     _, _, raw_id, raw_page = callback.data.split(":")
-    promo = await dealer_tools_repo.get_dealer_promo(db_user.id, int(raw_id))
+    is_admin = db_user.telegram_id in settings.admin_list
+    promo = (
+        await dealer_tools_repo.get_any_promo(int(raw_id)) if is_admin
+        else await dealer_tools_repo.get_dealer_promo(db_user.id, int(raw_id))
+    )
     if promo is None:
         await callback.answer(strip_custom_emoji_tags(t("dealer_not_found")), show_alert=True)
         return
+    owner = await db_repo.get_user_by_id(promo.dealer_id) if is_admin else None
+    owner_text = (
+        "\n\n" + t("promo_owner", owner=h(_promo_owner_label(owner, promo.dealer_id)))
+        if is_admin else ""
+    )
     await callback.answer()
     await send_with_logo(
         callback,
@@ -739,7 +762,7 @@ async def promo_card(callback: types.CallbackQuery, t, db_user):
             expire=promo.expire_at.strftime("%d.%m.%Y"),
             uses=promo.uses_count, maximum=promo.max_uses,
             status=t("promo_status_active" if promo.is_active else "promo_status_disabled"),
-        ),
+        ) + owner_text,
         reply_markup=_promo_card_kb(t, promo, int(raw_page)),
     )
 
@@ -749,10 +772,18 @@ async def promo_disable(callback: types.CallbackQuery, t, db_user):
     if not await _dealer(callback, db_user, t, allow_admin=True):
         return
     _, _, _, raw_id, raw_page = callback.data.split(":")
-    if not await dealer_tools_repo.deactivate_promo(db_user.id, int(raw_id)):
+    is_admin = db_user.telegram_id in settings.admin_list
+    changed = (
+        await dealer_tools_repo.deactivate_any_promo(int(raw_id)) if is_admin
+        else await dealer_tools_repo.deactivate_promo(db_user.id, int(raw_id))
+    )
+    if not changed:
         await callback.answer(strip_custom_emoji_tags(t("dealer_action_failed")), show_alert=True)
         return
-    promo = await dealer_tools_repo.get_dealer_promo(db_user.id, int(raw_id))
+    promo = (
+        await dealer_tools_repo.get_any_promo(int(raw_id)) if is_admin
+        else await dealer_tools_repo.get_dealer_promo(db_user.id, int(raw_id))
+    )
     await notify_dealer_activity(
         db_user, "⛔ Отключён промокод",
         f"Код: <code>{h(promo.code)}</code>" if promo else f"Промокод #{raw_id}",

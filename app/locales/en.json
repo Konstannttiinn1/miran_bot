@@ -201,5 +201,6 @@
   "purchase_summary": "<b>Selected subscription</b>\n{product}\n💵 Total for the term: <b>{price}</b>",
   "subscription_devices": "📱 Devices: {devices}",
   "promo_price_notice": "🎟️ <b>Promo code <code>{code}</code> applied: {percent}% off</b>",
-  "promo_price_bonus_days": "🎁 After payment: +{days} bonus days on the subscription."
+  "promo_price_bonus_days": "🎁 After payment: +{days} bonus days on the subscription.",
+  "promo_owner": "👤 Created by: {owner}"
 }
