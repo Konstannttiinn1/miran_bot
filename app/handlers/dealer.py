@@ -40,7 +40,7 @@ from app.utils.tariffs import (
 )
 from app.keyboards.builders import raw_btn
 from aiogram.types import InlineKeyboardMarkup
-from app.utils.notifications import notify_admins
+from app.utils.notifications import notify_admins, notify_dealer_activity
 
 log = logging.getLogger(__name__)
 
@@ -290,6 +290,13 @@ async def dealer_buy_confirm(callback: types.CallbackQuery, t, lang, db_user, st
         )
         return
 
+    await notify_dealer_activity(
+        db_user, "✅ Создана платная VPN-подписка",
+        f"Подписка #{sub.id} · {PLANS[plan]['devices']} устр. · "
+        f"{tariff['days']} дн.\n"
+        f"Трафик: {tariff['traffic_gb']} ГБ/30 дн. · "
+        f"Списано: ${price:.3f}",
+    )
     link = await subscription_link(sub.xui_email)
     await state.set_state(DealerManagedSubscription.waiting_name)
     await state.update_data(sub_id=sub.id, page=0)
@@ -418,6 +425,10 @@ async def dealer_subscription_name(message: types.Message, t, lang, db_user, sta
     if sub is None:
         await message.answer(t("subscription_not_found"))
         return
+    await notify_dealer_activity(
+        db_user, "✏️ Изменено имя клиента подписки",
+        f"Подписка #{sub.id} · новое имя: {h(name)}",
+    )
     link = await _subscription_link(sub)
     expire = sub.expire_at.strftime("%d.%m.%Y") if sub.expire_at else "—"
     text = t("dealer_name_saved", id=sub.id, name=h(sub.client_name), expire=expire)
@@ -597,6 +608,13 @@ async def dealer_subscription_renew_confirm(callback: types.CallbackQuery, t, la
         )
         return
 
+    await notify_dealer_activity(
+        db_user, "📅 Продлена VPN-подписка",
+        f"Подписка #{sub.id} · {h(sub.client_name)}\n"
+        f"Добавлено: {tariff['days']} дн. · "
+        f"Устройств: {tariff['devices']} · списано: ${price:.3f}\n"
+        f"Действует до: {expire_at:%d.%m.%Y}",
+    )
     await _show_subscription_card(callback, t, db_user.id, sub.id, page)
 
 
@@ -645,6 +663,11 @@ async def dealer_test_link(callback: types.CallbackQuery, t, lang, db_user):
         return
 
     await db_repo.complete_dealer_test_slot(slot_id, xui_email)
+    await notify_dealer_activity(
+        db_user, "🧪 Создана тестовая VPN-ссылка",
+        f"Срок: {settings.dealer_test_days} дн. · "
+        f"Трафик: {settings.dealer_test_traffic_gb} ГБ",
+    )
     remaining = max(0, settings.dealer_test_daily_limit - used)
 
     await callback.message.answer(
@@ -845,5 +868,10 @@ async def dealer_traffic_confirm(callback: types.CallbackQuery, t, lang, db_user
         await callback.message.answer(t("traffic_activation_failed"))
         await notify_admins(f"🚨 Не завершена докупка трафика: подписка #{sub.id}, заказ #{order.id}.")
         return
+    await notify_dealer_activity(
+        db_user, "➕ Докуплен трафик",
+        f"Подписка #{sub.id} · {h(sub.client_name)}\n"
+        f"+50 ГБ · заказ #{order.id} · списано: ${float(order.amount):.3f}",
+    )
     await callback.message.answer(t("traffic_added"))
     await _show_subscription_card(callback, t, db_user.id, sub.id, page)
