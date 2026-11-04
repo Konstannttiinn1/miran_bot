@@ -201,5 +201,6 @@
   "purchase_summary": "<b>Выбранная подписка</b>\n{product}\n💵 Итого за срок: <b>{price}</b>",
   "subscription_devices": "📱 Устройств: {devices}",
   "promo_price_notice": "🎟️ <b>Промокод <code>{code}</code> применён: скидка {percent}%</b>",
-  "promo_price_bonus_days": "🎁 Дополнительно после оплаты: +{days} дн. к подписке."
+  "promo_price_bonus_days": "🎁 Дополнительно после оплаты: +{days} дн. к подписке.",
+  "promo_owner": "👤 Создал: {owner}"
 }
