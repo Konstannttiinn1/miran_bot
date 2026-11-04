@@ -109,6 +109,7 @@ def payment_kb(t, back_callback: str = "back:plans") -> InlineKeyboardMarkup:
 def sub_link_kb(t) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [_btn(t, "btn_get_link", "menu:get_link")],
+        [_btn(t, "btn_reset_link", "menu:reset_link")],
         [_btn(t, "btn_buy", "menu:buy")],
         [raw_btn(
             t("btn_traffic_topup", price=get_price_display(TRAFFIC_TOPUP, _detect_lang(t))),
