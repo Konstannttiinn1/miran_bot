@@ -1,3 +1,4 @@
+import logging
 from html import escape as h
 
 from aiogram import F, Router, types
@@ -8,16 +9,17 @@ from aiogram.types import InlineKeyboardMarkup
 from app.config import settings
 from app.database.models import utcnow
 from app.handlers.states import Purchase
-from app.keyboards.builders import (admin_menu_kb, back_kb, dealer_menu_kb,
+from app.keyboards.builders import (admin_menu_kb, back_kb, dealer_menu_kb, raw_btn,
                                     language_kb, plans_kb, sub_link_kb)
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
-from app.services.subscription import grant_vpn
+from app.services.subscription import grant_vpn, reset_link
 from app.services.vpn_provider import subscription_link
 from app.utils.tariffs import DEFAULT_PLAN, get_plan_intro
 from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
 
+log = logging.getLogger(__name__)
 router = Router()
 router.message.middleware(I18nMiddleware())
 router.callback_query.middleware(I18nMiddleware())
@@ -236,6 +238,48 @@ async def get_link(callback: types.CallbackQuery, t, lang, db_user):
             t("support_msg", support=settings.support_username),
             reply_markup=back_kb(t, "back:main"),
         )
+
+
+@router.callback_query(F.data == "menu:reset_link")
+async def reset_link_prompt(callback: types.CallbackQuery, t, db_user):
+    sub = await db_repo.get_subscription(db_user.id)
+    if (
+        sub is None or sub.expire_at <= utcnow() or db_user.is_blocked
+        or sub.xui_email != str(db_user.telegram_id)
+    ):
+        await callback.answer(strip_custom_emoji_tags(t("reset_link_unavailable")), show_alert=True)
+        return
+    await callback.answer()
+    await send_with_logo(
+        callback, t("reset_link_warning"),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [raw_btn(t("btn_confirm_reset_link"), "menu:reset_link:confirm")],
+            [raw_btn(t("btn_back"), "menu:my_vpn")],
+        ]),
+    )
+
+
+@router.callback_query(F.data == "menu:reset_link:confirm")
+async def reset_link_confirm(callback: types.CallbackQuery, t, db_user):
+    sub = await db_repo.get_subscription(db_user.id)
+    if (
+        sub is None or sub.expire_at <= utcnow() or db_user.is_blocked
+        or sub.xui_email != str(db_user.telegram_id)
+        or callback.from_user.id != db_user.telegram_id
+    ):
+        await callback.answer(strip_custom_emoji_tags(t("reset_link_unavailable")), show_alert=True)
+        return
+    try:
+        link = await reset_link(db_user)
+    except Exception:
+        log.exception("User link reset failed for %s", db_user.telegram_id)
+        await callback.answer(strip_custom_emoji_tags(t("reset_link_failed")), show_alert=True)
+        return
+    await callback.answer()
+    await send_with_logo(
+        callback, t("reset_link_success", link=h(link)),
+        reply_markup=back_kb(t, "menu:my_vpn"),
+    )
 
 
 @router.callback_query(F.data == "menu:support")
