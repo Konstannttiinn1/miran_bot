@@ -113,9 +113,24 @@ async def create_promo(
     traffic_gb: int,
     expire_at: datetime,
     max_uses: int,
+    *,
+    discount_percent: int = 0,
 ) -> PromoCode:
-    if kind not in {"days", "days_traffic"}:
+    if kind not in {"days", "days_traffic", "discount", "days_discount"}:
         raise ValueError("invalid promo kind")
+    if not 1 <= max_uses <= 1000 or not 0 <= days <= 365:
+        raise ValueError("invalid promo limits")
+    if kind in {"discount", "days_discount"}:
+        if not 1 <= discount_percent <= 99:
+            raise ValueError("invalid discount percent")
+        if (kind == "discount" and days != 0) or (kind == "days_discount" and days < 1):
+            raise ValueError("invalid discount days")
+        if traffic_gb:
+            raise ValueError("discount coupons cannot grant traffic")
+    elif discount_percent:
+        raise ValueError("gift coupons cannot discount purchases")
+    elif days < 1 or (kind == "days" and traffic_gb):
+        raise ValueError("invalid gift days")
     async with async_session_factory() as session:
         exists = await session.scalar(
             select(PromoCode.id).where(func.lower(PromoCode.code) == code.lower())
@@ -128,6 +143,7 @@ async def create_promo(
             kind=kind,
             days=days,
             traffic_gb=traffic_gb,
+            discount_percent=discount_percent,
             expire_at=expire_at,
             max_uses=max_uses,
         )
