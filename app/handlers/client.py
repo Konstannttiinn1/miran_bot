@@ -13,7 +13,7 @@ from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services import heleket
 from app.services.vpn_provider import provider_name
-from app.services.subscription import TrialUnavailableError, can_buy_traffic, grant_vpn
+from app.services.subscription import TrialUnavailableError, can_buy_traffic, grant_paid_order, grant_vpn
 from app.utils.emojis import apply_emoji, strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
 from app.utils.notifications import notify_admins
@@ -214,8 +214,12 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
 
     if method == "stars":
         await state.clear()
-        stars = get_stars_price(plan, settings.stars_reward_usd)
-        order = await db_repo.create_order(db_user.id, plan, stars, "xtr", order_type=order_type)
+        original_stars = get_stars_price(plan, settings.stars_reward_usd)
+        order = await db_repo.create_order(
+            db_user.id, plan, original_stars, "xtr", order_type=order_type,
+            apply_promo=True,
+        )
+        stars = int(order.amount)
         title, description, label = _invoice_copy(lang, plan, stars)
         try:
             await callback.message.answer_invoice(
@@ -239,7 +243,11 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
             settings.dealer_discount,
         )
         # order.amount для дилерского заказа всегда хранится в USD.
-        order = await db_repo.create_order(db_user.id, plan, dealer_usd, "usd", order_type=order_type, retail_toman=retail_toman)
+        order = await db_repo.create_order(
+            db_user.id, plan, dealer_usd, "usd", order_type=order_type,
+            retail_toman=retail_toman, apply_promo=True,
+        )
+        retail_toman = await db_repo.get_order_retail_toman(order.id) or retail_toman
         await state.update_data(plan=plan, order_id=order.id, retail_toman=retail_toman)
         await state.set_state(Purchase.waiting_receipt)
         await send_with_logo(
@@ -264,9 +272,12 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
             return
         await state.clear()
         price_usd = get_usd_price(plan)
-        order = await db_repo.create_order(db_user.id, plan, price_usd, "usdt", order_type=order_type)
+        order = await db_repo.create_order(
+            db_user.id, plan, price_usd, "usdt", order_type=order_type,
+            apply_promo=True,
+        )
         try:
-            invoice = await heleket.create_invoice(price_usd, order.id)
+            invoice = await heleket.create_invoice(float(order.amount), order.id)
         except Exception:
             log.exception("Heleket invoice creation failed")
             await db_repo.update_order(order.id, status="failed")
@@ -361,7 +372,7 @@ async def stars_successful_payment(message: types.Message, t, lang, db_user):
     if not await db_repo.claim_payment_order(order.id, "stars_paid_processing", charge_id):
         return
     try:
-        link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, plan)
+        link, expire_at = await grant_paid_order(db_user.id, db_user.telegram_id, order)
     except Exception:
         log.exception("Stars paid but VPN grant failed: order %s", order.id)
         await db_repo.update_order(order.id, status="stars_paid_grant_failed")
