@@ -651,7 +651,17 @@ async def promo_back(callback: types.CallbackQuery, t, db_user, state: FSMContex
         await send_with_logo(callback, t("promo_ask_traffic", maximum=MAX_TEST_TRAFFIC_GB), reply_markup=_back(t, "dealer:promo:back:days"))
     elif step == "validity":
         await state.set_state(DealerPromoForm.validity)
-        await send_with_logo(callback, t("promo_ask_validity", maximum=MAX_PROMO_DAYS), reply_markup=_back(t, "dealer:promo:back:days"))
+        data = await state.get_data()
+        previous = {
+            "discount": "discount",
+            "days_discount": "days",
+            "days": "days",
+            "days_traffic": "traffic",
+        }.get(data.get("promo_kind"), "days")
+        await send_with_logo(
+            callback, t("promo_ask_validity", maximum=MAX_PROMO_DAYS),
+            reply_markup=_back(t, f"dealer:promo:back:{previous}"),
+        )
     elif step == "uses":
         await state.set_state(DealerPromoForm.uses)
         await send_with_logo(callback, t("promo_ask_uses", maximum=MAX_PROMO_USES), reply_markup=_back(t, "dealer:promo:back:validity"))
@@ -714,7 +724,10 @@ async def promo_disable(callback: types.CallbackQuery, t, db_user):
         await callback.answer(strip_custom_emoji_tags(t("dealer_action_failed")), show_alert=True)
         return
     await callback.answer(strip_custom_emoji_tags(t("promo_disabled")))
-    await _show_promos(callback, t, db_user.id, int(raw_page))
+    await _show_promos(
+        callback, t, db_user.id, int(raw_page),
+        admin=db_user.telegram_id in settings.admin_list,
+    )
 
 
 @router.callback_query(F.data == "menu:promo")
