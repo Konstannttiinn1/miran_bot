@@ -24,7 +24,7 @@ from app.keyboards.builders import (
 )
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
-from app.services.subscription import grant_vpn
+from app.services.subscription import grant_paid_order, grant_vpn
 from app.services.monthly_traffic import grant_monthly, is_monthly, parse_time
 from app.services.vpn_provider import (
     create_test_client,
@@ -697,7 +697,7 @@ async def dealer_approve(callback: types.CallbackQuery, t, lang, db_user):
         return
 
     try:
-        link, expire_at = await grant_vpn(user.id, user.telegram_id, order.plan)
+        link, expire_at = await grant_paid_order(user.id, user.telegram_id, order)
     except Exception:
         if order.plan == TRAFFIC_TOPUP:
             log.exception("Dealer-confirmed traffic payment needs reconciliation: order %s", order.id)

@@ -1,0 +1,28 @@
+"""One rounding policy for coupon previews and actual checkout amounts."""
+from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
+
+
+def discounted_amount(amount: float | int, percent: int, currency: str) -> float | int:
+    """Match invoice precision: whole Stars, three decimal places for USD/USDT."""
+    if not 1 <= percent <= 99:
+        raise ValueError("discount percent must be in 1..99")
+    multiplier = Decimal(100 - percent) / Decimal(100)
+    discounted = Decimal(str(amount)) * multiplier
+    if currency.lower() == "xtr":
+        return max(1, int(discounted.to_integral_value(rounding=ROUND_CEILING)))
+    if currency.lower() not in {"usd", "usdt"}:
+        raise ValueError("unsupported coupon currency")
+    return float(max(
+        Decimal("0.001"),
+        discounted.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP),
+    ))
+
+
+def discounted_toman(amount: int, percent: int) -> int:
+    """Round the retail bank-transfer quote as the order repository does."""
+    if not 1 <= percent <= 99:
+        raise ValueError("discount percent must be in 1..99")
+    multiplier = Decimal(100 - percent) / Decimal(100)
+    return max(1, int(
+        (Decimal(amount) * multiplier).to_integral_value(rounding=ROUND_HALF_UP)
+    ))

@@ -1,3 +1,7 @@
+import asyncio
+import logging
+import time
+from collections import defaultdict
 from html import escape as h
 
 from aiogram import F, Router, types
@@ -8,16 +12,19 @@ from aiogram.types import InlineKeyboardMarkup
 from app.config import settings
 from app.database.models import utcnow
 from app.handlers.states import Purchase
-from app.keyboards.builders import (admin_menu_kb, back_kb, dealer_menu_kb,
+from app.keyboards.builders import (admin_menu_kb, back_kb, dealer_menu_kb, raw_btn,
                                     language_kb, plans_kb, sub_link_kb)
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services.subscription import grant_vpn
-from app.services.vpn_provider import subscription_link
+from app.services.vpn_provider import reset_subscription_link, subscription_link
 from app.utils.tariffs import DEFAULT_PLAN, get_plan_intro
 from app.utils.emojis import strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
 
+log = logging.getLogger(__name__)
+_link_reset_locks = defaultdict(asyncio.Lock)
+_link_reset_recent: dict[int, float] = {}
 router = Router()
 router.message.middleware(I18nMiddleware())
 router.callback_query.middleware(I18nMiddleware())
@@ -181,17 +188,21 @@ async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMCont
         with_test = await db_repo.can_claim_test(db_user.id)
         await state.set_state(Purchase.choosing_plan)
         await state.update_data(plans_with_test=with_test, plan=None, order_id=None)
-        screen_text = get_plan_intro(t, lang)
+        promo = await db_repo.get_active_purchase_promo(db_user.id)
+        screen_text = get_plan_intro(t, lang, promo)
         if sub is not None:
             screen_text = (
                 t("subscription_expired", expire_date=sub.expire_at.strftime("%d.%m.%Y"))
                 + "\n\n"
-                + get_plan_intro(t, lang)
+                + screen_text
             )
         await send_with_logo(
             callback,
             screen_text,
-            reply_markup=plans_kb(t, with_test=with_test, lang=lang),
+            reply_markup=plans_kb(
+                t, with_test=with_test, lang=lang,
+                discount_percent=promo.discount_percent if promo else 0,
+            ),
         )
         return
 
@@ -209,7 +220,14 @@ async def buy(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext
     await state.set_state(Purchase.choosing_plan)
     await state.update_data(plans_with_test=False, plan=None, order_id=None)
     await callback.answer()
-    await send_with_logo(callback, get_plan_intro(t, lang), reply_markup=plans_kb(t, with_test=False, lang=lang))
+    promo = await db_repo.get_active_purchase_promo(db_user.id)
+    await send_with_logo(
+        callback, get_plan_intro(t, lang, promo),
+        reply_markup=plans_kb(
+            t, with_test=False, lang=lang,
+            discount_percent=promo.discount_percent if promo else 0,
+        ),
+    )
 
 
 @router.callback_query(F.data == "menu:get_link")
@@ -236,6 +254,59 @@ async def get_link(callback: types.CallbackQuery, t, lang, db_user):
             t("support_msg", support=settings.support_username),
             reply_markup=back_kb(t, "back:main"),
         )
+
+
+@router.callback_query(F.data == "menu:reset_link")
+async def reset_link_prompt(callback: types.CallbackQuery, t, db_user):
+    sub = await db_repo.get_subscription(db_user.id)
+    if (
+        sub is None or sub.expire_at <= utcnow() or db_user.is_blocked
+    ):
+        await callback.answer(strip_custom_emoji_tags(t("reset_link_unavailable")), show_alert=True)
+        return
+    await callback.answer()
+    await send_with_logo(
+        callback, t("reset_link_warning"),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [raw_btn(t("btn_confirm_reset_link"), "menu:reset_link:confirm")],
+            [raw_btn(t("btn_back"), "menu:my_vpn")],
+        ]),
+    )
+
+
+@router.callback_query(F.data == "menu:reset_link:confirm")
+async def reset_link_confirm(callback: types.CallbackQuery, t, db_user):
+    sub = await db_repo.get_subscription(db_user.id)
+    if (
+        sub is None or sub.expire_at <= utcnow() or db_user.is_blocked
+        or callback.from_user.id != db_user.telegram_id
+    ):
+        await callback.answer(strip_custom_emoji_tags(t("reset_link_unavailable")), show_alert=True)
+        return
+    # Serialize fast repeated confirmations. Without this, the second revoke
+    # would immediately invalidate the new URL delivered by the first.
+    async with _link_reset_locks[db_user.telegram_id]:
+        recent = _link_reset_recent.get(db_user.telegram_id)
+        if recent is not None and time.monotonic() - recent < 60:
+            await callback.answer(strip_custom_emoji_tags(t("reset_link_recent")), show_alert=True)
+            return
+        try:
+            link = await reset_subscription_link(sub.xui_email)
+        except Exception:
+            log.exception("User link reset failed for %s", db_user.telegram_id)
+            await callback.answer(strip_custom_emoji_tags(t("reset_link_failed")), show_alert=True)
+            return
+        _link_reset_recent[db_user.telegram_id] = time.monotonic()
+        if len(_link_reset_recent) > 1000:
+            cutoff = time.monotonic() - 120
+            for user_id, stamp in list(_link_reset_recent.items()):
+                if stamp < cutoff:
+                    _link_reset_recent.pop(user_id, None)
+    await callback.answer()
+    await send_with_logo(
+        callback, t("reset_link_success", link=h(link)),
+        reply_markup=back_kb(t, "menu:my_vpn"),
+    )
 
 
 @router.callback_query(F.data == "menu:support")

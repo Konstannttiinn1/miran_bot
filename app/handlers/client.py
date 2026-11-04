@@ -13,13 +13,14 @@ from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo
 from app.services import heleket
 from app.services.vpn_provider import provider_name
-from app.services.subscription import TrialUnavailableError, can_buy_traffic, grant_vpn
+from app.services.subscription import TrialUnavailableError, can_buy_traffic, grant_paid_order, grant_vpn
 from app.utils.emojis import apply_emoji, strip_custom_emoji_tags
 from app.utils.menu import send_main_menu, send_with_logo
 from app.utils.notifications import notify_admins
 from app.utils.tariffs import (
     PLANS, RETIRED_PLANS, TRAFFIC_TOPUP,
     format_toman, get_dealer_debit_usd, get_period_plan, get_plan_intro, get_price_display,
+    get_promo_notice, get_promo_price_display,
     get_stars_price, get_tariff, get_toman_price, get_usd_price,
     is_sale_product, usd_to_toman,
 )
@@ -138,13 +139,18 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
         await callback.answer(strip_custom_emoji_tags(t("traffic_requires_subscription")), show_alert=True)
         return
     if get_tariff(plan).get("monthly"):
+        promo = await db_repo.get_active_purchase_promo(db_user.id)
         await state.update_data(plan=None, order_id=None)
         await state.set_state(Purchase.choosing_devices)
         await callback.answer()
+        notice = get_promo_notice(t, promo)
         await send_with_logo(
             callback,
-            t("select_devices", months=PLANS[plan]["months"]),
-            reply_markup=devices_kb(plan, t),
+            t("select_devices", months=PLANS[plan]["months"])
+            + ("\n\n" + notice if notice else ""),
+            reply_markup=devices_kb(
+                plan, t, discount_percent=promo.discount_percent if promo else 0,
+            ),
         )
         return
     await state.update_data(plan=plan)
@@ -162,12 +168,18 @@ async def choose_devices(callback: types.CallbackQuery, t, lang, db_user, state:
     if plan not in PLANS or not PLANS[plan].get("monthly"):
         await callback.answer(strip_custom_emoji_tags(t("invalid_plan")), show_alert=True)
         return
+    promo = await db_repo.get_active_purchase_promo(db_user.id)
+    price = get_promo_price_display(
+        plan, lang, promo.discount_percent if promo else 0, markup=True,
+    )
+    notice = get_promo_notice(t, promo)
     await state.update_data(plan=plan, order_id=None)
     await state.set_state(Purchase.choosing_payment)
     await callback.answer()
     await send_with_logo(
         callback,
-        t("purchase_summary", product=_product_label(plan, lang), price=get_price_display(plan, lang))
+        (notice + "\n\n" if notice else "")
+        + t("purchase_summary", product=_product_label(plan, lang), price=price)
         + "\n\n" + t("select_payment"),
         reply_markup=payment_kb(t, f"plan:{get_period_plan(plan)}"),
     )
@@ -183,10 +195,14 @@ async def back_to_plans(callback: types.CallbackQuery, t, lang, db_user, state: 
     await state.update_data(plans_with_test=with_test, plan=None, order_id=None)
     await state.set_state(Purchase.choosing_plan)
     await callback.answer()
+    promo = await db_repo.get_active_purchase_promo(db_user.id)
     await send_with_logo(
         callback,
-        get_plan_intro(t, lang),
-        reply_markup=plans_kb(t, with_test=with_test, lang=lang),
+        get_plan_intro(t, lang, promo),
+        reply_markup=plans_kb(
+            t, with_test=with_test, lang=lang,
+            discount_percent=promo.discount_percent if promo else 0,
+        ),
     )
 
 
@@ -214,8 +230,12 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
 
     if method == "stars":
         await state.clear()
-        stars = get_stars_price(plan, settings.stars_reward_usd)
-        order = await db_repo.create_order(db_user.id, plan, stars, "xtr", order_type=order_type)
+        original_stars = get_stars_price(plan, settings.stars_reward_usd)
+        order = await db_repo.create_order(
+            db_user.id, plan, original_stars, "xtr", order_type=order_type,
+            apply_promo=True,
+        )
+        stars = int(order.amount)
         title, description, label = _invoice_copy(lang, plan, stars)
         try:
             await callback.message.answer_invoice(
@@ -239,7 +259,11 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
             settings.dealer_discount,
         )
         # order.amount для дилерского заказа всегда хранится в USD.
-        order = await db_repo.create_order(db_user.id, plan, dealer_usd, "usd", order_type=order_type, retail_toman=retail_toman)
+        order = await db_repo.create_order(
+            db_user.id, plan, dealer_usd, "usd", order_type=order_type,
+            retail_toman=retail_toman, apply_promo=True,
+        )
+        retail_toman = await db_repo.get_order_retail_toman(order.id) or retail_toman
         await state.update_data(plan=plan, order_id=order.id, retail_toman=retail_toman)
         await state.set_state(Purchase.waiting_receipt)
         await send_with_logo(
@@ -264,9 +288,12 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
             return
         await state.clear()
         price_usd = get_usd_price(plan)
-        order = await db_repo.create_order(db_user.id, plan, price_usd, "usdt", order_type=order_type)
+        order = await db_repo.create_order(
+            db_user.id, plan, price_usd, "usdt", order_type=order_type,
+            apply_promo=True,
+        )
         try:
-            invoice = await heleket.create_invoice(price_usd, order.id)
+            invoice = await heleket.create_invoice(float(order.amount), order.id)
         except Exception:
             log.exception("Heleket invoice creation failed")
             await db_repo.update_order(order.id, status="failed")
@@ -361,7 +388,7 @@ async def stars_successful_payment(message: types.Message, t, lang, db_user):
     if not await db_repo.claim_payment_order(order.id, "stars_paid_processing", charge_id):
         return
     try:
-        link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, plan)
+        link, expire_at = await grant_paid_order(db_user.id, db_user.telegram_id, order)
     except Exception:
         log.exception("Stars paid but VPN grant failed: order %s", order.id)
         await db_repo.update_order(order.id, status="stars_paid_grant_failed")

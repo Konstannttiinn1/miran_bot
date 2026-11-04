@@ -46,6 +46,7 @@ class DealerTestManage(StatesGroup):
 class DealerPromoForm(StatesGroup):
     code = State()
     kind = State()
+    discount = State()
     days = State()
     traffic = State()
     validity = State()
@@ -57,8 +58,8 @@ class PromoRedeem(StatesGroup):
     code = State()
 
 
-async def _dealer(callback: types.CallbackQuery, user, t) -> bool:
-    if user.role == "dealer":
+async def _dealer(callback: types.CallbackQuery, user, t, *, allow_admin: bool = False) -> bool:
+    if user.role == "dealer" or (allow_admin and user.telegram_id in settings.admin_list):
         return True
     await callback.answer(strip_custom_emoji_tags(t("dealer_access_only")), show_alert=True)
     return False
@@ -92,12 +93,29 @@ def _test_card_kb(t, test, page: int, link: str | None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _promo_kind_kb(t) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+def _promo_kind_kb(t, *, admin: bool = False) -> InlineKeyboardMarkup:
+    rows = [
         [raw_btn(t("promo_kind_days"), "dealer:promo:kind:days")],
         [raw_btn(t("promo_kind_days_traffic"), "dealer:promo:kind:days_traffic")],
-        [raw_btn(t("btn_back"), "dealer:promos")],
-    ])
+    ]
+    if admin:
+        rows.extend([
+            [raw_btn(t("promo_kind_discount"), "dealer:promo:kind:discount")],
+            [raw_btn(t("promo_kind_days_discount"), "dealer:promo:kind:days_discount")],
+        ])
+    rows.append([raw_btn(t("btn_back"), "dealer:promos")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _promo_benefits(t, *, days: int, traffic: int, discount: int) -> str:
+    bits = []
+    if discount:
+        bits.append(t("promo_benefit_discount", percent=discount))
+    if days:
+        bits.append(t("promo_benefit_days", days=days))
+    if traffic:
+        bits.append(t("promo_benefit_traffic", traffic=traffic))
+    return " + ".join(bits)
 
 
 def _promo_confirm_kb(t) -> InlineKeyboardMarkup:
@@ -404,7 +422,7 @@ async def test_extend_days(message: types.Message, t, db_user, state: FSMContext
     await message.answer(t("dealer_test_extended", days=days, expire=new_expire.strftime("%d.%m.%Y")))
 
 
-async def _show_promos(callback, t, dealer_id: int, page: int) -> None:
+async def _show_promos(callback, t, dealer_id: int, page: int, *, admin: bool = False) -> None:
     page = max(0, page)
     items, total = await dealer_tools_repo.list_dealer_promos(dealer_id, page)
     pages = max(1, (total + 4) // 5)
@@ -420,33 +438,48 @@ async def _show_promos(callback, t, dealer_id: int, page: int) -> None:
     if nav:
         rows.append(nav)
     rows.append([raw_btn(t("promo_create"), "dealer:promo:new")])
-    rows.append([raw_btn(t("btn_back"), "back:dealer")])
+    rows.append([raw_btn(t("btn_back"), "back:admin" if admin else "back:dealer")])
     await callback.answer()
     await send_with_logo(callback, t("promo_list_title", total=total, page=page + 1, pages=pages), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
-@router.callback_query(F.data == "dealer:promos")
-async def promos_first(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user, t):
+@router.callback_query(F.data == "admin:promos")
+async def admin_promos(callback: types.CallbackQuery, t, db_user, state: FSMContext):
+    if db_user.telegram_id not in settings.admin_list:
+        await callback.answer(strip_custom_emoji_tags(t("access_denied")), show_alert=True)
         return
     await state.clear()
-    await _show_promos(callback, t, db_user.id, 0)
+    await _show_promos(callback, t, db_user.id, 0, admin=True)
+
+
+@router.callback_query(F.data == "dealer:promos")
+async def promos_first(callback: types.CallbackQuery, t, db_user, state: FSMContext):
+    if not await _dealer(callback, db_user, t, allow_admin=True):
+        return
+    await state.clear()
+    await _show_promos(
+        callback, t, db_user.id, 0,
+        admin=db_user.telegram_id in settings.admin_list,
+    )
 
 
 @router.callback_query(F.data.startswith("dealer:promos:"))
 async def promos_page(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user, t):
+    if not await _dealer(callback, db_user, t, allow_admin=True):
         return
     try:
         page = int(callback.data.rsplit(":", 1)[-1])
     except ValueError:
         page = 0
-    await _show_promos(callback, t, db_user.id, page)
+    await _show_promos(
+        callback, t, db_user.id, page,
+        admin=db_user.telegram_id in settings.admin_list,
+    )
 
 
 @router.callback_query(F.data == "dealer:promo:new")
 async def promo_new(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user, t):
+    if not await _dealer(callback, db_user, t, allow_admin=True):
         return
     await state.clear()
     await state.set_state(DealerPromoForm.code)
@@ -462,20 +495,68 @@ async def promo_code(message: types.Message, t, db_user, state: FSMContext):
         return
     await state.update_data(promo_code=code)
     await state.set_state(DealerPromoForm.kind)
-    await message.answer(t("promo_ask_kind"), reply_markup=_promo_kind_kb(t))
+    await message.answer(
+        t("promo_ask_kind"),
+        reply_markup=_promo_kind_kb(t, admin=db_user.telegram_id in settings.admin_list),
+    )
 
 
 @router.callback_query(F.data.startswith("dealer:promo:kind:"))
 async def promo_kind(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user, t):
+    if not await _dealer(callback, db_user, t, allow_admin=True):
         return
     kind = callback.data.rsplit(":", 1)[-1]
-    if kind not in {"days", "days_traffic"}:
+    allowed = {"days", "days_traffic"}
+    if db_user.telegram_id in settings.admin_list:
+        allowed |= {"discount", "days_discount"}
+    if kind not in allowed:
+        await callback.answer(strip_custom_emoji_tags(t("access_denied")), show_alert=True)
         return
-    await state.update_data(promo_kind=kind)
-    await state.set_state(DealerPromoForm.days)
+    await state.update_data(
+        promo_kind=kind, promo_days=0, promo_traffic=0, promo_discount=0,
+    )
     await callback.answer()
-    await send_with_logo(callback, t("promo_ask_days", maximum=MAX_PROMO_DAYS), reply_markup=_back(t, "dealer:promo:new"))
+    if kind in {"discount", "days_discount"}:
+        await state.set_state(DealerPromoForm.discount)
+        await send_with_logo(
+            callback, t("promo_ask_discount"),
+            reply_markup=_back(t, "dealer:promo:new"),
+        )
+    else:
+        await state.set_state(DealerPromoForm.days)
+        await send_with_logo(
+            callback, t("promo_ask_days", maximum=MAX_PROMO_DAYS),
+            reply_markup=_back(t, "dealer:promo:new"),
+        )
+
+
+@router.message(DealerPromoForm.discount)
+async def promo_discount(message: types.Message, t, db_user, state: FSMContext):
+    if db_user.telegram_id not in settings.admin_list:
+        await state.clear()
+        await message.answer(t("access_denied"))
+        return
+    try:
+        percent = int((message.text or "").strip())
+    except ValueError:
+        percent = 0
+    if not 1 <= percent <= 99:
+        await message.answer(t("dealer_number_range", minimum=1, maximum=99))
+        return
+    await state.update_data(promo_discount=percent)
+    data = await state.get_data()
+    if data.get("promo_kind") == "days_discount":
+        await state.set_state(DealerPromoForm.days)
+        await message.answer(
+            t("promo_ask_days", maximum=MAX_PROMO_DAYS),
+            reply_markup=_back(t, "dealer:promo:back:discount"),
+        )
+    else:
+        await state.set_state(DealerPromoForm.validity)
+        await message.answer(
+            t("promo_ask_validity", maximum=MAX_PROMO_DAYS),
+            reply_markup=_back(t, "dealer:promo:back:discount"),
+        )
 
 
 @router.message(DealerPromoForm.days)
@@ -538,24 +619,49 @@ async def promo_uses(message: types.Message, t, db_user, state: FSMContext):
     await state.update_data(promo_uses=uses)
     data = await state.get_data()
     await state.set_state(DealerPromoForm.confirm)
-    await message.answer(t("promo_confirm", code=h(data["promo_code"]), days=data["promo_days"], traffic=data["promo_traffic"], validity=data["promo_validity"], uses=uses), reply_markup=_promo_confirm_kb(t))
+    await message.answer(
+        t(
+            "promo_confirm", code=h(data["promo_code"]),
+            benefits=_promo_benefits(
+                t, days=data["promo_days"], traffic=data["promo_traffic"],
+                discount=data.get("promo_discount", 0),
+            ),
+            validity=data["promo_validity"], uses=uses,
+        ),
+        reply_markup=_promo_confirm_kb(t),
+    )
 
 
 @router.callback_query(F.data.startswith("dealer:promo:back:"))
 async def promo_back(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user, t):
+    if not await _dealer(callback, db_user, t, allow_admin=True):
         return
     step = callback.data.rsplit(":", 1)[-1]
     await callback.answer()
     if step == "days":
         await state.set_state(DealerPromoForm.days)
-        await send_with_logo(callback, t("promo_ask_days", maximum=MAX_PROMO_DAYS), reply_markup=_back(t, "dealer:promo:new"))
+        data = await state.get_data()
+        previous = "dealer:promo:back:discount" if data.get("promo_kind") == "days_discount" else "dealer:promo:new"
+        await send_with_logo(callback, t("promo_ask_days", maximum=MAX_PROMO_DAYS), reply_markup=_back(t, previous))
+    elif step == "discount":
+        await state.set_state(DealerPromoForm.discount)
+        await send_with_logo(callback, t("promo_ask_discount"), reply_markup=_back(t, "dealer:promo:new"))
     elif step == "traffic":
         await state.set_state(DealerPromoForm.traffic)
         await send_with_logo(callback, t("promo_ask_traffic", maximum=MAX_TEST_TRAFFIC_GB), reply_markup=_back(t, "dealer:promo:back:days"))
     elif step == "validity":
         await state.set_state(DealerPromoForm.validity)
-        await send_with_logo(callback, t("promo_ask_validity", maximum=MAX_PROMO_DAYS), reply_markup=_back(t, "dealer:promo:back:days"))
+        data = await state.get_data()
+        previous = {
+            "discount": "discount",
+            "days_discount": "days",
+            "days": "days",
+            "days_traffic": "traffic",
+        }.get(data.get("promo_kind"), "days")
+        await send_with_logo(
+            callback, t("promo_ask_validity", maximum=MAX_PROMO_DAYS),
+            reply_markup=_back(t, f"dealer:promo:back:{previous}"),
+        )
     elif step == "uses":
         await state.set_state(DealerPromoForm.uses)
         await send_with_logo(callback, t("promo_ask_uses", maximum=MAX_PROMO_USES), reply_markup=_back(t, "dealer:promo:back:validity"))
@@ -563,14 +669,17 @@ async def promo_back(callback: types.CallbackQuery, t, db_user, state: FSMContex
 
 @router.callback_query(F.data == "dealer:promo:confirm")
 async def promo_confirm(callback: types.CallbackQuery, t, db_user, state: FSMContext):
-    if not await _dealer(callback, db_user, t):
+    if not await _dealer(callback, db_user, t, allow_admin=True):
         return
     data = await state.get_data()
+    if data.get("promo_kind") in {"discount", "days_discount"} and db_user.telegram_id not in settings.admin_list:
+        await callback.answer(strip_custom_emoji_tags(t("access_denied")), show_alert=True)
+        return
     try:
         promo = await dealer_tools_repo.create_promo(
             db_user.id, data["promo_code"], data["promo_kind"], int(data["promo_days"]),
             int(data["promo_traffic"]), utcnow() + timedelta(days=int(data["promo_validity"])),
-            int(data["promo_uses"]),
+            int(data["promo_uses"]), discount_percent=int(data.get("promo_discount", 0)),
         )
     except ValueError:
         await callback.answer(strip_custom_emoji_tags(t("promo_code_taken")), show_alert=True)
@@ -582,7 +691,7 @@ async def promo_confirm(callback: types.CallbackQuery, t, db_user, state: FSMCon
 
 @router.callback_query(F.data.startswith("dealer:promocard:"))
 async def promo_card(callback: types.CallbackQuery, t, db_user):
-    if not await _dealer(callback, db_user, t):
+    if not await _dealer(callback, db_user, t, allow_admin=True):
         return
     _, _, raw_id, raw_page = callback.data.split(":")
     promo = await dealer_tools_repo.get_dealer_promo(db_user.id, int(raw_id))
@@ -590,19 +699,35 @@ async def promo_card(callback: types.CallbackQuery, t, db_user):
         await callback.answer(strip_custom_emoji_tags(t("dealer_not_found")), show_alert=True)
         return
     await callback.answer()
-    await send_with_logo(callback, t("promo_card", code=h(promo.code), days=promo.days, traffic=promo.traffic_gb, expire=promo.expire_at.strftime("%d.%m.%Y"), uses=promo.uses_count, maximum=promo.max_uses, status=t("promo_status_active" if promo.is_active else "promo_status_disabled")), reply_markup=_promo_card_kb(t, promo, int(raw_page)))
+    await send_with_logo(
+        callback,
+        t(
+            "promo_card", code=h(promo.code),
+            benefits=_promo_benefits(
+                t, days=promo.days, traffic=promo.traffic_gb,
+                discount=promo.discount_percent,
+            ),
+            expire=promo.expire_at.strftime("%d.%m.%Y"),
+            uses=promo.uses_count, maximum=promo.max_uses,
+            status=t("promo_status_active" if promo.is_active else "promo_status_disabled"),
+        ),
+        reply_markup=_promo_card_kb(t, promo, int(raw_page)),
+    )
 
 
 @router.callback_query(F.data.startswith("dealer:promo:disable:"))
 async def promo_disable(callback: types.CallbackQuery, t, db_user):
-    if not await _dealer(callback, db_user, t):
+    if not await _dealer(callback, db_user, t, allow_admin=True):
         return
     _, _, _, raw_id, raw_page = callback.data.split(":")
     if not await dealer_tools_repo.deactivate_promo(db_user.id, int(raw_id)):
         await callback.answer(strip_custom_emoji_tags(t("dealer_action_failed")), show_alert=True)
         return
     await callback.answer(strip_custom_emoji_tags(t("promo_disabled")))
-    await _show_promos(callback, t, db_user.id, int(raw_page))
+    await _show_promos(
+        callback, t, db_user.id, int(raw_page),
+        admin=db_user.telegram_id in settings.admin_list,
+    )
 
 
 @router.callback_query(F.data == "menu:promo")
@@ -620,6 +745,19 @@ async def promo_redeem(message: types.Message, t, db_user, state: FSMContext):
     if status != "reserved" or promo is None:
         await state.clear()
         await message.answer(t("promo_redeem_" + status), reply_markup=main_menu_kb(t))
+        return
+    if promo.kind in {"discount", "days_discount"}:
+        await state.clear()
+        await message.answer(
+            t(
+                "promo_discount_accepted",
+                benefits=_promo_benefits(
+                    t, days=promo.days, traffic=0,
+                    discount=promo.discount_percent,
+                ),
+            ),
+            reply_markup=main_menu_kb(t),
+        )
         return
     sub = await db_repo.get_subscription(db_user.id)
     if sub is None:

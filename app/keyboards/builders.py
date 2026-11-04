@@ -7,7 +7,7 @@ from app.middlewares.i18n import get_text
 from app.utils.emojis import button_parts, strip_custom_emoji_tags
 from app.utils.tariffs import (
     DURATION_PLANS, PLANS, TRAFFIC_TOPUP, get_dealer_price_display, get_device_plans,
-    get_period_plan, get_plan_button_text, get_price_display,
+    get_period_plan, get_plan_button_text, get_price_display, get_promo_price_display,
 )
 
 
@@ -65,13 +65,18 @@ def main_menu_kb(t) -> InlineKeyboardMarkup:
     ])
 
 
-def plans_kb(t, with_test: bool = False, *, lang: str | None = None) -> InlineKeyboardMarkup:
+def plans_kb(
+    t, with_test: bool = False, *, lang: str | None = None,
+    discount_percent: int = 0,
+) -> InlineKeyboardMarkup:
     lang = lang or _detect_lang(t)
     rows = []
     for key in DURATION_PLANS:
         rows.append([
             raw_btn(
-                get_plan_button_text(key, lang, settings.rub_per_usd),
+                get_plan_button_text(
+                    key, lang, settings.rub_per_usd, discount_percent=discount_percent,
+                ),
                 f"plan:{key}",
             )
         ])
@@ -84,11 +89,13 @@ def plans_kb(t, with_test: bool = False, *, lang: str | None = None) -> InlineKe
 def devices_kb(
     plan: str, t, *, callback_prefix: str = "device:", callback_suffix: str = "",
     back_callback: str = "back:plans", dealer_price: bool = False,
+    discount_percent: int = 0,
 ) -> InlineKeyboardMarkup:
     rows = []
     for key in get_device_plans(plan):
         lang = _detect_lang(t)
-        price = get_dealer_price_display(key, lang) if dealer_price else get_price_display(key, lang)
+        price = (get_dealer_price_display(key, lang) if dealer_price
+                 else get_promo_price_display(key, lang, discount_percent))
         rows.append([raw_btn(
             t("device_option", devices=PLANS[key]["devices"], price=price),
             f"{callback_prefix}{key}{callback_suffix}",
@@ -109,6 +116,7 @@ def payment_kb(t, back_callback: str = "back:plans") -> InlineKeyboardMarkup:
 def sub_link_kb(t) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [_btn(t, "btn_get_link", "menu:get_link")],
+        [_btn(t, "btn_reset_link", "menu:reset_link")],
         [_btn(t, "btn_buy", "menu:buy")],
         [raw_btn(
             t("btn_traffic_topup", price=get_price_display(TRAFFIC_TOPUP, _detect_lang(t))),
@@ -283,6 +291,7 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
     rows = [
         [raw_btn("👥 Пользователи", "admin:users")],
         [raw_btn("🤝 Дилеры", "admin:dealers")],
+        [raw_btn("🎟️ Промокоды", "admin:promos")],
         [raw_btn("📊 Логи", "admin:logs")],
     ]
     analytics = analytics_button("📈 Аналитика")

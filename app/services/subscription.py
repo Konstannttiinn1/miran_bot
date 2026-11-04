@@ -19,11 +19,19 @@ class TrialUnavailableError(Exception):
     """Тест уже использован/зарезервирован или есть активная подписка."""
 
 
-async def grant_vpn(user_id: int, telegram_id: int, plan: str) -> tuple[str, object]:
+async def grant_vpn(
+    user_id: int, telegram_id: int, plan: str, *, bonus_days: int = 0,
+) -> tuple[str, object]:
+    if not 0 <= bonus_days <= 365:
+        raise ValueError("Invalid bonus days")
     if plan == TRAFFIC_TOPUP:
+        if bonus_days:
+            raise ValueError("Traffic top-up cannot add days")
         return await grant_traffic_topup(user_id)
     if plan != TEST_TARIFF:
-        return await _grant_vpn(user_id, telegram_id, plan)
+        return await _grant_vpn(user_id, telegram_id, plan, bonus_days=bonus_days)
+    if bonus_days:
+        raise ValueError("Trial cannot add bonus days")
 
     order = await db_repo.claim_test_order(user_id, telegram_id)
     if order is None:
@@ -37,16 +45,21 @@ async def grant_vpn(user_id: int, telegram_id: int, plan: str) -> tuple[str, obj
     return result
 
 
-async def _grant_vpn(user_id: int, telegram_id: int, plan: str) -> tuple[str, object]:
+async def _grant_vpn(
+    user_id: int, telegram_id: int, plan: str, *, bonus_days: int = 0,
+) -> tuple[str, object]:
     tariff = get_tariff(plan)
-    days = tariff["days"]
+    days = tariff["days"] + bonus_days
     traffic_gb = tariff["traffic_gb"]
     email = str(telegram_id)
 
     provider = get_vpn_provider()
     panel_expiry = None
     if tariff.get("monthly"):
-        panel_expiry = await grant_monthly(provider, email, days, limit_ip=tariff["devices"])
+        panel_expiry = await grant_monthly(
+            provider, email, tariff["days"], limit_ip=tariff["devices"],
+            bonus_days=bonus_days,
+        )
     elif plan != TEST_TARIFF and await is_monthly(email):
         # Honor pending legacy payments without erasing a monthly allowance.
         await provider.extend_client(email, days)
@@ -70,6 +83,12 @@ async def _grant_vpn(user_id: int, telegram_id: int, plan: str) -> tuple[str, ob
     expire_at = saved.expire_at
     log.info("VPN выдан: user=%s plan=%s till=%s traffic=%sGB", user_id, plan, expire_at, traffic_gb)
     return link, expire_at
+
+
+async def grant_paid_order(user_id: int, telegram_id: int, order) -> tuple[str, object]:
+    """Use the fixed bonus attached to the paid order, never a new promo lookup."""
+    bonus_days = await db_repo.get_order_promo_bonus_days(order.id)
+    return await grant_vpn(user_id, telegram_id, order.plan, bonus_days=bonus_days)
 
 
 async def can_buy_traffic(user_id: int) -> bool:

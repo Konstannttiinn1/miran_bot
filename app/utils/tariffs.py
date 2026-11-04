@@ -1,6 +1,8 @@
 """Retail prices in USD. Legacy products are kept only for existing orders."""
 from decimal import Decimal, ROUND_HALF_UP
 from math import ceil, floor
+from html import escape as h
+from app.utils.promo_pricing import discounted_amount, discounted_toman
 from app.config import settings
 
 TEST_TARIFF = "test"
@@ -118,12 +120,42 @@ def get_price_display(plan: str, lang: str, rub_per_usd: float = 90.0) -> str:
     return f"${get_usd_price(plan):.2f}"
 
 
-def get_plan_intro(t, lang: str) -> str:
-    return t(
-        "select_plan", price1=get_price_display("month1", lang),
-        price2=get_price_display("month1d2", lang),
-        price3=get_price_display("month1d3", lang),
+def get_promo_price_display(
+    plan: str, lang: str, discount_percent: int = 0, *, markup: bool = False,
+) -> str:
+    """Full retail price vs promo price, for HTML captions or plain Telegram buttons."""
+    if not discount_percent:
+        return get_price_display(plan, lang)
+    if lang == "fa":
+        before = get_price_display(plan, lang)
+        after = format_toman(discounted_toman(get_toman_price(plan), discount_percent))
+    else:
+        before = f"${get_usd_price(plan):.2f}"
+        new = discounted_amount(get_usd_price(plan), discount_percent, "usdt")
+        after = f"${new:.3f}" if round(new * 1000) % 10 else f"${new:.2f}"
+    if markup:
+        return f"<s>{before}</s> <b>{after}</b>"
+    return f"{before} → {after}"
+
+
+def get_promo_notice(t, promo) -> str:
+    if promo is None:
+        return ""
+    notice = t("promo_price_notice", code=h(promo.code), percent=promo.discount_percent)
+    if promo.kind == "days_discount" and promo.days:
+        notice += "\n" + t("promo_price_bonus_days", days=promo.days)
+    return notice
+
+
+def get_plan_intro(t, lang: str, promo=None) -> str:
+    percent = promo.discount_percent if promo is not None else 0
+    intro = t(
+        "select_plan", price1=get_promo_price_display("month1", lang, percent, markup=True),
+        price2=get_promo_price_display("month1d2", lang, percent, markup=True),
+        price3=get_promo_price_display("month1d3", lang, percent, markup=True),
     )
+    notice = get_promo_notice(t, promo)
+    return f"{notice}\n\n{intro}" if notice else intro
 
 
 def get_dealer_price_display(plan: str, lang: str) -> str:
@@ -133,11 +165,13 @@ def get_dealer_price_display(plan: str, lang: str) -> str:
     return "$" + format(amount, ".3f")
 
 
-def get_plan_button_text(plan: str, lang: str, rub_per_usd: float = 90.0) -> str:
+def get_plan_button_text(
+    plan: str, lang: str, rub_per_usd: float = 90.0, *, discount_percent: int = 0,
+) -> str:
     tariff = get_tariff(plan)
     months = tariff.get("months", 1)
     traffic = tariff["traffic_gb"]
-    price = get_price_display(plan, lang, rub_per_usd)
+    price = get_promo_price_display(plan, lang, discount_percent)
     if lang == "fa":
         return f"🕒 {str(months).translate(_FA_DIGITS)} ماه | {str(traffic).translate(_FA_DIGITS)} گیگ در ماه — از {price}"
     if lang == "ru":

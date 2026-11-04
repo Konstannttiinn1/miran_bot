@@ -7,7 +7,7 @@ from app.config import settings
 from app.middlewares.i18n import get_text
 from app.repositories import db_repo
 from app.services import heleket
-from app.services.subscription import grant_vpn
+from app.services.subscription import grant_paid_order
 from app.utils.notifications import notify_admins
 from app.utils.tariffs import TRAFFIC_TOPUP
 
@@ -42,7 +42,7 @@ async def check_pending_payments() -> None:
         if not await db_repo.claim_payment_order(order.id, "crypto_paid_processing"):
             continue
         try:
-            link, expire_at = await grant_vpn(user.id, user.telegram_id, order.plan)
+            link, expire_at = await grant_paid_order(user.id, user.telegram_id, order)
         except Exception:
             await db_repo.update_order(order.id, status="crypto_paid_grant_failed")
             log.exception("Heleket: оплата есть, VPN не выдан по заказу %s", order.id)
