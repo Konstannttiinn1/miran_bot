@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -230,6 +231,7 @@ async def rollback_dealer_order(order_id: int, dealer_id: int) -> bool:
                 dealer.dealer_balance = float(dealer.dealer_balance) + float(order.amount)
 
             order.status = "failed"
+            await release_failed_order_promo(session, order_id)
             session.add(
                 DealerLog(
                     dealer_id=dealer_id,
@@ -254,6 +256,7 @@ async def reject_dealer_order(order_id: int, dealer_id: int) -> Order | None:
                 return None
             order.status = "failed"
             order.dealer_id = dealer_id
+            await release_failed_order_promo(session, order_id)
             session.add(
                 DealerLog(
                     dealer_id=dealer_id,
@@ -894,17 +897,102 @@ async def update_subscription(user_id: int, **fields) -> None:
             await session.commit()
 
 
-async def create_order(user_id: int, plan: str, amount: float, currency: str, order_type: str = "purchase", *, retail_toman: int | None = None) -> Order:
+async def create_order(
+    user_id: int, plan: str, amount: float, currency: str,
+    order_type: str = "purchase", *, retail_toman: int | None = None,
+    apply_promo: bool = False,
+) -> Order:
+    """Lock an activated discount coupon to exactly one checkout.
+
+    The original amount is authoritative unless this is a customer subscription
+    purchase. The discounted amount and bank quote are saved together.
+    """
     async with async_session_factory() as session:
-        order = Order(user_id=user_id, plan=plan, amount=amount, currency=currency, order_type=order_type)
-        session.add(order)
-        await session.flush()
-        if retail_toman is not None:
-            from app.repositories.analytics_repo import save_quote
-            await save_quote(session, order, retail_toman)
-        await session.commit()
+        async with session.begin():
+            coupon = None
+            if apply_promo and order_type == "purchase" and currency.lower() in {"xtr", "usd", "usdt"}:
+                row = await session.execute(
+                    select(PromoRedemption, PromoCode)
+                    .join(PromoCode, PromoRedemption.promo_id == PromoCode.id)
+                    .where(
+                        PromoRedemption.user_id == user_id,
+                        PromoRedemption.order_id.is_(None),
+                        PromoCode.kind.in_(("discount", "days_discount")),
+                        PromoCode.discount_percent > 0,
+                    )
+                    .order_by(PromoRedemption.id.asc())
+                    .limit(1)
+                    .with_for_update(of=PromoRedemption)
+                )
+                coupon = row.first()
+                if coupon:
+                    redemption, promo = coupon
+                    multiplier = Decimal(100 - promo.discount_percent) / Decimal(100)
+                    if currency.lower() == "xtr":
+                        amount = max(1, int(
+                            (Decimal(str(amount)) * multiplier).to_integral_value(rounding=ROUND_CEILING)
+                        ))
+                    else:
+                        amount = float(max(
+                            Decimal("0.001"),
+                            (Decimal(str(amount)) * multiplier).quantize(
+                                Decimal("0.001"), rounding=ROUND_HALF_UP
+                            ),
+                        ))
+                    if retail_toman is not None:
+                        retail_toman = max(1, int(
+                            (Decimal(retail_toman) * multiplier).to_integral_value(
+                                rounding=ROUND_HALF_UP
+                            )
+                        ))
+
+            order = Order(
+                user_id=user_id, plan=plan, amount=amount,
+                currency=currency, order_type=order_type,
+            )
+            session.add(order)
+            await session.flush()
+            if coupon:
+                coupon[0].order_id = order.id
+            if retail_toman is not None:
+                from app.repositories.analytics_repo import save_quote
+                await save_quote(session, order, retail_toman)
         await session.refresh(order)
         return order
+
+
+async def get_order_promo_bonus_days(order_id: int) -> int:
+    """Bonus days are added only to the paid subscription in this order."""
+    async with async_session_factory() as session:
+        days = await session.scalar(
+            select(PromoCode.days)
+            .join(PromoRedemption, PromoRedemption.promo_id == PromoCode.id)
+            .where(
+                PromoRedemption.order_id == order_id,
+                PromoCode.kind == "days_discount",
+            )
+        )
+        return max(0, int(days or 0))
+
+
+async def get_order_retail_toman(order_id: int) -> int | None:
+    from app.database.models import OrderPriceSnapshot
+    from app.repositories.analytics_repo import order_key
+    async with async_session_factory() as session:
+        order = await session.get(Order, order_id)
+        if order is None:
+            return None
+        snapshot = await session.get(OrderPriceSnapshot, order_key(order))
+        return snapshot.retail_toman if snapshot is not None else None
+
+
+async def release_failed_order_promo(session, order_id: int) -> None:
+    """Unbind a coupon when checkout was cancelled before payment."""
+    redemption = await session.scalar(
+        select(PromoRedemption).where(PromoRedemption.order_id == order_id).with_for_update()
+    )
+    if redemption is not None:
+        redemption.order_id = None
 
 
 async def get_order(order_id: int) -> Order | None:
@@ -949,6 +1037,8 @@ async def update_order(order_id: int, **fields) -> None:
     async with async_session_factory() as session:
         order = await session.get(Order, order_id)
         if order is not None:
+            if fields.get("status") == "failed" and order.status in {"pending", "pending_dealer"}:
+                await release_failed_order_promo(session, order_id)
             for key, value in fields.items():
                 setattr(order, key, value)
             await session.commit()
