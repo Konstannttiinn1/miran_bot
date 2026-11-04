@@ -20,6 +20,7 @@ from app.utils.notifications import notify_admins
 from app.utils.tariffs import (
     PLANS, RETIRED_PLANS, TRAFFIC_TOPUP,
     format_toman, get_dealer_debit_usd, get_period_plan, get_plan_intro, get_price_display,
+    get_promo_notice, get_promo_price_display,
     get_stars_price, get_tariff, get_toman_price, get_usd_price,
     is_sale_product, usd_to_toman,
 )
@@ -138,13 +139,18 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
         await callback.answer(strip_custom_emoji_tags(t("traffic_requires_subscription")), show_alert=True)
         return
     if get_tariff(plan).get("monthly"):
+        promo = await db_repo.get_active_purchase_promo(db_user.id)
         await state.update_data(plan=None, order_id=None)
         await state.set_state(Purchase.choosing_devices)
         await callback.answer()
+        notice = get_promo_notice(t, promo)
         await send_with_logo(
             callback,
-            t("select_devices", months=PLANS[plan]["months"]),
-            reply_markup=devices_kb(plan, t),
+            t("select_devices", months=PLANS[plan]["months"])
+            + ("\n\n" + notice if notice else ""),
+            reply_markup=devices_kb(
+                plan, t, discount_percent=promo.discount_percent if promo else 0,
+            ),
         )
         return
     await state.update_data(plan=plan)
@@ -162,12 +168,18 @@ async def choose_devices(callback: types.CallbackQuery, t, lang, db_user, state:
     if plan not in PLANS or not PLANS[plan].get("monthly"):
         await callback.answer(strip_custom_emoji_tags(t("invalid_plan")), show_alert=True)
         return
+    promo = await db_repo.get_active_purchase_promo(db_user.id)
+    price = get_promo_price_display(
+        plan, lang, promo.discount_percent if promo else 0, markup=True,
+    )
+    notice = get_promo_notice(t, promo)
     await state.update_data(plan=plan, order_id=None)
     await state.set_state(Purchase.choosing_payment)
     await callback.answer()
     await send_with_logo(
         callback,
-        t("purchase_summary", product=_product_label(plan, lang), price=get_price_display(plan, lang))
+        (notice + "\n\n" if notice else "")
+        + t("purchase_summary", product=_product_label(plan, lang), price=price)
         + "\n\n" + t("select_payment"),
         reply_markup=payment_kb(t, f"plan:{get_period_plan(plan)}"),
     )
@@ -183,10 +195,14 @@ async def back_to_plans(callback: types.CallbackQuery, t, lang, db_user, state: 
     await state.update_data(plans_with_test=with_test, plan=None, order_id=None)
     await state.set_state(Purchase.choosing_plan)
     await callback.answer()
+    promo = await db_repo.get_active_purchase_promo(db_user.id)
     await send_with_logo(
         callback,
-        get_plan_intro(t, lang),
-        reply_markup=plans_kb(t, with_test=with_test, lang=lang),
+        get_plan_intro(t, lang, promo),
+        reply_markup=plans_kb(
+            t, with_test=with_test, lang=lang,
+            discount_percent=promo.discount_percent if promo else 0,
+        ),
     )
 
 
