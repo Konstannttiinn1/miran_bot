@@ -31,6 +31,7 @@
   "reset_link_warning": "⚠️ <b>Generate a new link?</b>\n\nYour old subscription link and credentials will stop working. Reconnect all your devices using the new link.\n\nYour expiry date and traffic allowance will stay unchanged.",
   "reset_link_unavailable": "No active personal subscription is available for reset.",
   "reset_link_failed": "Could not reset your link. Please retry later or contact support.",
+  "reset_link_recent": "Your link was just reset. Wait one minute before resetting it again.",
   "reset_link_success": "✅ <b>New link generated</b>\n\n🔗 <code>{link}</code>\n\nThe old link and credentials no longer work. Reconnect your devices.",
   "connection_link": "🔗 Your connection link:\n{link}\n\n⚠️ Do not share it with anyone.",
   "btn_buy": "🛒 Buy / Extend",
