@@ -289,6 +289,10 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
     plan = data.get("plan", "")
     await callback.answer()
 
+    if db_user.is_blocked:
+        await state.clear()
+        await send_with_logo(callback, t("access_denied"))
+        return
     if not is_sale_product(plan) or plan == "test":
         await state.clear()
         await send_with_logo(callback, t("payment_error"))
