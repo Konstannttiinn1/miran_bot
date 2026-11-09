@@ -10,7 +10,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.models import Base
-from app.repositories import db_repo, dealer_tools_repo
+from app.repositories import db_repo, dealer_tools_repo, customer_subscriptions_repo
 from app.services import subscription as subscription_service
 from app.services import monthly_traffic
 
@@ -45,6 +45,7 @@ async def database(tmp_path, monkeypatch, local_postgres):
     factory = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(db_repo, "async_session_factory", factory)
     monkeypatch.setattr(dealer_tools_repo, "async_session_factory", factory)
+    monkeypatch.setattr(customer_subscriptions_repo, "async_session_factory", factory)
     monkeypatch.setattr(monthly_traffic, "async_session_factory", factory)
     monthly_traffic._locks.clear()
     monkeypatch.setattr(subscription_service, "subscription_link", AsyncMock(return_value="https://vpn.example.test/sub/test-id"))
