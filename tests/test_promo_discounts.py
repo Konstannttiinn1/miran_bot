@@ -157,10 +157,11 @@ async def test_activated_coupon_is_visible_before_checkout_and_hidden_after(data
 
 def test_coupon_preview_matches_checkout_rounding_in_all_currencies():
     assert discounted_amount(1.0, 30, "usdt") == 0.7
-    assert discounted_amount(4.59, 30, "usdt") == 3.213
+    assert discounted_amount(4.59, 30, "usdt") == 3.21
+    assert discounted_amount(4.59, 30, "usd") == 3.213
     assert discounted_amount(101, 30, "xtr") == 71
     assert get_promo_price_display("month3d3", "en", 30, markup=True) == (
-        "<s>$4.59</s> <b>$3.213</b>"
+        "<s>$4.59</s> <b>$3.21</b>"
     )
     fa_preview = get_promo_price_display("month1", "fa", 30, markup=True)
     assert "<s>" in fa_preview and "</s> <b>" in fa_preview and "تومان" in fa_preview
