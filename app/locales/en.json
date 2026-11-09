@@ -225,5 +225,6 @@
   "customer_apply_promo": "🎟️ Apply promo code",
   "customer_promo_ask": "🎟️ Enter a promo code for this purchase.\n\nIt will only be redeemed when your invoice is created.",
   "customer_promo_invalid": "This promo is unavailable, already used, or does not discount purchases. Try another code.",
-  "customer_checkout_changed": "Invoice could not be created: the promo or subscription has changed, or your account limit was reached. Go back or try another code."
+  "customer_checkout_changed": "Invoice could not be created: the promo or subscription has changed, or your account limit was reached. Go back or try another code.",
+  "customer_live_usage": "📊 Used: {used} / {limit} GB\n📱 Device limit: {devices}"
 }
