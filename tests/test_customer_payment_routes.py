@@ -162,3 +162,19 @@ async def test_dealer_bank_confirmation_provisions_extra_only_once(database, mon
     assert (await db_repo.get_order(order.id)).status == "paid"
     assert (await db_repo.get_user_by_id(approver.id)).dealer_balance == pytest.approx(9.5)
     assert (await db_repo.get_subscription(buyer.id)).id == primary.id
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_payment_keyboard_hides_disabled_heleket(monkeypatch, enabled):
+    from app.keyboards import builders
+
+    monkeypatch.setattr(builders.settings, "heleket_enabled", enabled)
+    markup = builders.payment_kb(lambda key, **kw: key)
+    callbacks = [
+        button.callback_data
+        for row in markup.inline_keyboard for button in row
+    ]
+    assert ("pay:heleket" in callbacks) is enabled
+    assert "pay:stars" in callbacks
+    assert "pay:dealer" in callbacks
+    assert "checkout:promo" in callbacks
