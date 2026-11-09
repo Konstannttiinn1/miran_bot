@@ -11,6 +11,7 @@ from app.database.models import utcnow
 from app.handlers.states import DealerManagedSubscription
 from app.keyboards.builders import (
     back_kb,
+    customer_cabinet_kb,
     dealer_buy_confirm_kb,
     dealer_buy_plans_kb,
     dealer_created_name_kb,
@@ -749,6 +750,9 @@ async def dealer_approve(callback: types.CallbackQuery, t, lang, db_user):
             "traffic_payment_success" if order.plan == TRAFFIC_TOPUP else "payment_success",
             link=h(link),
             expire_date=expire_at.strftime("%d.%m.%Y"),
+        ),
+        reply_markup=customer_cabinet_kb(
+            lambda key, **kw: get_text(user.lang, key, **kw)
         ),
     )
     await callback.message.answer(t("dealer_order_confirmed"))
