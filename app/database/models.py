@@ -31,9 +31,15 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True)
-    xui_email: Mapped[str] = mapped_column(String)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    xui_email: Mapped[str] = mapped_column(String, unique=True)
     expire_at: Mapped[datetime] = mapped_column()
+    # The original Telegram-ID VPN stays the primary subscription.
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=True)
+    label: Mapped[str] = mapped_column(String(64), default="")
+    plan: Mapped[str] = mapped_column(String(64), default="")
+    # New secondary slots are reserved before invoice issuance, not activated.
+    status: Mapped[str] = mapped_column(String(24), default="active")
     traffic_limit_gb: Mapped[int] = mapped_column(Integer, default=0)
     notified_3d: Mapped[bool] = mapped_column(Boolean, default=False)
     notified_1d: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -89,6 +95,10 @@ class Order(Base):
     currency: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(default="pending")
     order_type: Mapped[str] = mapped_column(String, default="purchase")  # purchase / renew / traffic_topup
+    # NULL is a legacy order targeting the user's primary subscription.
+    subscription_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subscriptions.id"), index=True, nullable=True,
+    )
     external_id: Mapped[str | None] = mapped_column(nullable=True)
     receipt_photo_id: Mapped[str | None] = mapped_column(nullable=True)
     dealer_id: Mapped[int | None] = mapped_column(nullable=True)

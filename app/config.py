@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     dealer_test_daily_limit: int = 10
     dealer_test_timezone: str = "Asia/Tehran"
 
+    # Max extra personal subscriptions beyond the existing primary VPN.
+    max_additional_subscriptions: int = 10
+
     # Языки и оформление
     available_langs: str = "fa,en,ru"
     use_custom_emoji: bool = False

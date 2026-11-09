@@ -20,6 +20,8 @@ from app.database.models import (
     utcnow,
 )
 from app.utils.promo_pricing import discounted_amount, discounted_toman
+from app.config import settings
+from app.repositories.customer_subscriptions_repo import SubscriptionLimitReached
 
 async def get_or_create_user(telegram_id: int, username: str | None = None) -> User:
     async with async_session_factory() as session:
@@ -851,10 +853,12 @@ async def claim_test_order(user_id: int, telegram_id: int) -> Order | None:
 
 async def get_subscription(user_id: int) -> Subscription | None:
     async with async_session_factory() as session:
-        result = await session.execute(
-            select(Subscription).where(Subscription.user_id == user_id)
+        return await session.scalar(
+            select(Subscription).where(
+                Subscription.user_id == user_id,
+                Subscription.is_primary.is_(True),
+            )
         )
-        return result.scalar_one_or_none()
 
 
 # Алиас для совместимости с payment_checker.py
@@ -865,22 +869,39 @@ async def upsert_subscription(
     user_id: int, xui_email: str, expire_at,
     traffic_limit_gb: int | None = 0, *, only_extend: bool = False,
 ) -> Subscription:
-    """Atomic insert/update; paid concurrent grants cannot shorten validity."""
+    """Update only the legacy primary VPN under its owner's row lock."""
     async with async_session_factory() as session:
-        dialect = session.get_bind().dialect.name
-        insert = pg_insert if dialect == "postgresql" else sqlite_insert
-        later = expire_at > Subscription.expire_at
-        statement = insert(Subscription).values(
-            user_id=user_id, xui_email=xui_email, expire_at=expire_at,
-            traffic_limit_gb=traffic_limit_gb or 0,
-        ).on_conflict_do_update(index_elements=[Subscription.user_id], set_={
-            "expire_at": case((later, expire_at), else_=Subscription.expire_at) if only_extend else expire_at,
-            "traffic_limit_gb": traffic_limit_gb if traffic_limit_gb is not None else Subscription.traffic_limit_gb,
-            "notified_3d": case((later, False), else_=Subscription.notified_3d),
-            "notified_1d": case((later, False), else_=Subscription.notified_1d),
-        }).returning(Subscription)
-        sub = (await session.execute(statement)).scalar_one()
-        await session.commit()
+        async with session.begin():
+            # Lock the owner even when a primary row has not yet been created.
+            owner = await session.scalar(select(User).where(User.id == user_id).with_for_update())
+            if owner is None:
+                raise ValueError("Subscription owner not found")
+            sub = await session.scalar(
+                select(Subscription).where(
+                    Subscription.user_id == user_id,
+                    Subscription.is_primary.is_(True),
+                ).with_for_update()
+            )
+            if sub is None:
+                sub = Subscription(
+                    user_id=user_id, xui_email=xui_email, expire_at=expire_at,
+                    traffic_limit_gb=traffic_limit_gb or 0,
+                    is_primary=True, status="active",
+                )
+                session.add(sub)
+            else:
+                if sub.xui_email != xui_email:
+                    raise RuntimeError("Primary VPN identity cannot be silently replaced")
+                later = expire_at > sub.expire_at
+                sub.expire_at = max(expire_at, sub.expire_at) if only_extend else expire_at
+                if traffic_limit_gb is not None:
+                    sub.traffic_limit_gb = traffic_limit_gb
+                if later:
+                    sub.notified_3d = False
+                    sub.notified_1d = False
+                sub.status = "active"
+            await session.flush()
+        await session.refresh(sub)
         return sub
 
 
@@ -888,7 +909,10 @@ async def update_subscription(user_id: int, **fields) -> None:
     """Обновляет поля подписки (expire_at, traffic_limit_gb и т.д.)."""
     async with async_session_factory() as session:
         result = await session.execute(
-            select(Subscription).where(Subscription.user_id == user_id)
+            select(Subscription).where(
+                Subscription.user_id == user_id,
+                Subscription.is_primary.is_(True),
+            )
         )
         sub = result.scalar_one_or_none()
         if sub is not None:
@@ -921,7 +945,8 @@ async def get_active_purchase_promo(user_id: int) -> PromoCode | None:
 async def create_order(
     user_id: int, plan: str, amount: float, currency: str,
     order_type: str = "purchase", *, retail_toman: int | None = None,
-    apply_promo: bool = False,
+    apply_promo: bool = False, subscription_id: int | None = None,
+    new_subscription: bool = False,
 ) -> Order:
     """Lock an activated discount coupon to exactly one checkout.
 
@@ -930,6 +955,53 @@ async def create_order(
     """
     async with async_session_factory() as session:
         async with session.begin():
+            if new_subscription:
+                if subscription_id is not None or order_type != "purchase" or plan == "test":
+                    raise ValueError("A new slot is available only for a paid subscription")
+                # Serialise the capacity check across simultaneous invoice requests.
+                owner = await session.scalar(
+                    select(User).where(User.id == user_id).with_for_update()
+                )
+                if owner is None or owner.is_blocked:
+                    raise ValueError("Customer is unavailable")
+                primary = await session.scalar(
+                    select(Subscription.id).where(
+                        Subscription.user_id == user_id,
+                        Subscription.is_primary.is_(True),
+                    )
+                )
+                if primary is None:
+                    raise ValueError("Purchase the primary subscription first")
+                active_slots = await session.scalar(
+                    select(func.count()).select_from(Subscription).where(
+                        Subscription.user_id == user_id,
+                        Subscription.is_primary.is_(False),
+                        Subscription.status != "cancelled",
+                    )
+                )
+                limit = max(0, min(int(settings.max_additional_subscriptions), 100))
+                if int(active_slots or 0) >= limit:
+                    raise SubscriptionLimitReached("Additional subscription limit reached")
+                slot = Subscription(
+                    user_id=user_id,
+                    xui_email=f"cs-{user_id}-{uuid4().hex[:20]}",
+                    expire_at=utcnow(), traffic_limit_gb=0,
+                    plan=plan, label="", is_primary=False, status="pending",
+                )
+                session.add(slot)
+                await session.flush()
+                subscription_id = slot.id
+            elif subscription_id is not None:
+                selected = await session.scalar(
+                    select(Subscription).where(
+                        Subscription.id == subscription_id,
+                        Subscription.user_id == user_id,
+                        Subscription.status == "active",
+                    )
+                )
+                if selected is None:
+                    raise ValueError("Selected subscription does not belong to the customer")
+
             coupon = None
             if apply_promo and order_type == "purchase" and currency.lower() in {"xtr", "usd", "usdt"}:
                 row = await session.execute(
@@ -957,6 +1029,7 @@ async def create_order(
             order = Order(
                 user_id=user_id, plan=plan, amount=amount,
                 currency=currency, order_type=order_type,
+                subscription_id=subscription_id,
             )
             session.add(order)
             await session.flush()
@@ -1058,6 +1131,10 @@ async def update_order(order_id: int, **fields) -> None:
         if order is not None:
             if fields.get("status") == "failed" and order.status in {"pending", "pending_dealer"}:
                 await release_failed_order_promo(session, order_id)
+                if order.subscription_id is not None:
+                    sub = await session.get(Subscription, order.subscription_id)
+                    if sub is not None and sub.status == "pending" and not sub.is_primary:
+                        sub.status = "cancelled"
             for key, value in fields.items():
                 setattr(order, key, value)
             await session.commit()
