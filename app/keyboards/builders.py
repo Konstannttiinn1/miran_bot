@@ -59,7 +59,7 @@ def language_kb(t=None, with_back: bool = False) -> InlineKeyboardMarkup:
 def main_menu_kb(t) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [_btn(t, "btn_my_vpn", "menu:my_vpn")],
-        [_btn(t, "btn_promo", "menu:promo")],
+        [_btn(t, "btn_buy", "menu:buy")],
         [_btn(t, "btn_support", "menu:support")],
         [_btn(t, "btn_lang", "menu:lang")],
     ])
