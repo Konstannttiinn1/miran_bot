@@ -102,10 +102,31 @@ async def send_with_logo(target, text: str, reply_markup=None, **kwargs) -> None
     await target.answer(text, reply_markup=reply_markup)
 
 
+async def _trial_visible(target) -> bool:
+    """Only new personal customers with an unclaimed trial see this button.
+
+    This is a visibility check, not the security boundary. claim_test_order()
+    atomically enforces one claim per Telegram ID when the button is pressed.
+    """
+    actor = getattr(target, "from_user", None)
+    telegram_id = getattr(actor, "id", None)
+    if not isinstance(telegram_id, int):
+        return False
+
+    from app.repositories import db_repo
+    user = await db_repo.get_user_by_tg(telegram_id)
+    if user is None or user.is_blocked or user.role == "dealer":
+        return False
+    if await db_repo.get_subscription(user.id) is not None:
+        return False
+    return await db_repo.can_claim_test(user.id)
+
+
 async def send_main_menu(target, t) -> None:
-    """Показывает главное меню в текущем экране."""
+    """Show the correct main menu for the current user's trial eligibility."""
+    with_trial = await _trial_visible(target)
     await send_with_logo(
         target,
         t("main_menu_text"),
-        reply_markup=main_menu_kb(t),
+        reply_markup=main_menu_kb(t, with_trial=with_trial),
     )
