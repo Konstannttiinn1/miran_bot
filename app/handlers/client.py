@@ -110,6 +110,36 @@ def _invoice_copy(lang: str, plan: str, stars: int) -> tuple[str, str, str]:
     )
 
 
+async def activate_trial(callback: types.CallbackQuery, t, db_user, state: FSMContext):
+    """Shared trial entry point for main menu and legacy plan selection."""
+    flow = await state.get_data()
+    if flow.get("purchase_mode") in {"new", "renew", "topup"}:
+        await callback.answer(t("test_unavailable"), show_alert=True)
+        return
+    # A new user may claim a trial once. The repository's atomic claim
+    # remains authoritative if another request races this check.
+    if (await db_repo.get_subscription(db_user.id) is not None
+            or not await db_repo.can_claim_test(db_user.id)):
+        await callback.answer(t("test_unavailable"), show_alert=True)
+        return
+    await state.clear()
+    # Do not hold the callback open while the VPN panel responds.
+    await callback.answer()
+    try:
+        link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, "test")
+    except TrialUnavailableError:
+        await callback.message.answer(t("test_unavailable"))
+        return
+    except Exception:
+        log.exception("test grant failed")
+        await callback.message.answer(t("test_activation_failed"))
+        return
+    await callback.message.answer(
+        t("test_activated") + "\n" +
+        apply_emoji(f"🔗 {h(link)}", settings.use_custom_emoji)
+    )
+
+
 @router.callback_query(F.data.startswith("plan:"))
 async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     plan = callback.data.split(":")[1]
@@ -118,26 +148,7 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
         return
 
     if plan == "test":
-        flow = await state.get_data()
-        if flow.get("purchase_mode") in {"new", "renew", "topup"}:
-            await callback.answer(t("test_unavailable"), show_alert=True)
-            return
-        await state.clear()
-        # Не держим callback открытым, пока панель отвечает (до 30 секунд).
-        await callback.answer()
-        try:
-            link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, "test")
-        except TrialUnavailableError:
-            await callback.message.answer(t("test_unavailable"))
-            return
-        except Exception:
-            log.exception("test grant failed")
-            await callback.message.answer(t("test_activation_failed"))
-            return
-        await callback.message.answer(
-            t("test_activated") + "\n" +
-            apply_emoji(f"🔗 {h(link)}", settings.use_custom_emoji)
-        )
+        await activate_trial(callback, t, db_user, state)
         return
 
     active_data = await state.get_data()
