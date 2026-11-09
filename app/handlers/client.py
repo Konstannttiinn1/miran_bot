@@ -275,7 +275,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
         await send_with_logo(callback, t("payment_error"))
         return
 
-    if plan == TRAFFIC_TOPUP and not await can_buy_traffic(db_user.id):
+    if plan == TRAFFIC_TOPUP and not await can_buy_traffic(db_user.id, data.get("subscription_id")):
         await state.clear()
         await send_with_logo(callback, t("traffic_requires_subscription"))
         return
@@ -283,15 +283,39 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
     if get_tariff(plan).get("monthly") and provider_name() != "remnawave":
         await send_with_logo(callback, t("sales_unavailable"))
         return
-    back_callback = f"plan:{get_period_plan(plan)}" if get_tariff(plan).get("monthly") else "back:plans"
+    back_callback = (
+        f"plan:{get_period_plan(plan)}" if get_tariff(plan).get("monthly")
+        else (
+            f"cust:card:{data['subscription_id']}"
+            if data.get("subscription_id") is not None else "back:plans"
+        )
+    )
+    target = {
+        "subscription_id": data.get("subscription_id"),
+        "new_subscription": data.get("purchase_mode") == "new",
+        "promo_code": data.get("checkout_promo_code"),
+    }
+
+    async def create_checkout_order(amount, currency, **extras):
+        try:
+            return await db_repo.create_order(
+                db_user.id, plan, amount, currency, order_type=order_type,
+                apply_promo=True, **target, **extras,
+            )
+        except ValueError:
+            log.info("Checkout rejected, user=%s plan=%s mode=%s", db_user.id, plan, data.get("purchase_mode"))
+            await send_with_logo(
+                callback, t("customer_checkout_changed"),
+                reply_markup=payment_kb(t, back_callback, allow_promo=plan != TRAFFIC_TOPUP),
+            )
+            return None
 
     if method == "stars":
-        await state.clear()
         original_stars = get_stars_price(plan, settings.stars_reward_usd)
-        order = await db_repo.create_order(
-            db_user.id, plan, original_stars, "xtr", order_type=order_type,
-            apply_promo=True,
-        )
+        order = await create_checkout_order(original_stars, "xtr")
+        if order is None:
+            return
+        await state.clear()
         stars = int(order.amount)
         title, description, label = _invoice_copy(lang, plan, stars)
         try:
@@ -316,10 +340,11 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
             settings.dealer_discount,
         )
         # order.amount для дилерского заказа всегда хранится в USD.
-        order = await db_repo.create_order(
-            db_user.id, plan, dealer_usd, "usd", order_type=order_type,
-            retail_toman=retail_toman, apply_promo=True,
+        order = await create_checkout_order(
+            dealer_usd, "usd", retail_toman=retail_toman,
         )
+        if order is None:
+            return
         retail_toman = await db_repo.get_order_retail_toman(order.id) or retail_toman
         await state.update_data(plan=plan, order_id=order.id, retail_toman=retail_toman)
         await state.set_state(Purchase.waiting_receipt)
@@ -340,15 +365,14 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
             await send_with_logo(
                 callback,
                 t("pay_temporarily_disabled"),
-                reply_markup=payment_kb(t, back_callback),
+                reply_markup=payment_kb(t, back_callback, allow_promo=plan != TRAFFIC_TOPUP),
             )
             return
-        await state.clear()
         price_usd = get_usd_price(plan)
-        order = await db_repo.create_order(
-            db_user.id, plan, price_usd, "usdt", order_type=order_type,
-            apply_promo=True,
-        )
+        order = await create_checkout_order(price_usd, "usdt")
+        if order is None:
+            return
+        await state.clear()
         try:
             invoice = await heleket.create_invoice(float(order.amount), order.id)
         except Exception:
@@ -367,7 +391,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
     await send_with_logo(
         callback,
         t("payment_placeholder") + f"\n\n{plan} ➜ {method}",
-        reply_markup=payment_kb(t, back_callback),
+        reply_markup=payment_kb(t, back_callback, allow_promo=plan != TRAFFIC_TOPUP),
     )
 
 
