@@ -70,8 +70,9 @@ async def live_worker():
     success = False
 
     try:
-        stage = "creating synthetic owner and primary on cloned DB"
+        stage = "creating synthetic owner on cloned DB"
         owner = await db_repo.get_or_create_user(telegram_id)
+        stage = "creating synthetic primary on cloned DB"
         primary = await db_repo.upsert_subscription(
             owner.id, str(telegram_id), utcnow() + timedelta(days=32),
             traffic_limit_gb=100,
@@ -91,6 +92,10 @@ async def live_worker():
         if target is None or target.status != "pending" or target.is_primary:
             raise AssertionError("New additional VPN was not reserved independently")
         test_email = target.xui_email
+        if os.environ.get("ORION_TEST_DB_ONLY") == "YES":
+            print("DB-ONLY PASSED: synthetic user, primary, order and secondary slot on clone.", flush=True)
+            success = True
+            return
 
         # Guard against deleting another user's account: the generated name
         # must not be present in the live panel before the first POST.
@@ -176,8 +181,20 @@ async def live_worker():
         print("  OK: primary subscription unaffected", flush=True)
         success = True
     except Exception as exc:
-        # Don't include API response bodies, URLs, credentials, or client data.
+        # Never print the SQL statement, its parameters, URLs, API response
+        # bodies, credentials or synthetic IDs.
         print(f"  FAILED at '{stage}' ({type(exc).__name__})", flush=True)
+        chain = exc
+        for depth in range(3):
+            chain = getattr(chain, "__cause__", None)
+            if chain is None:
+                break
+            state = getattr(chain, "sqlstate", None) or getattr(chain, "pgcode", None)
+            print(
+                f"    cause #{depth + 1}: {type(chain).__name__}"
+                + (f", SQLSTATE={state}" if state else ""),
+                flush=True,
+            )
     finally:
         if test_email and cleanup_armed:
             print("=== Removing the synthetic client from live Remnawave ===", flush=True)
@@ -223,10 +240,11 @@ def main():
         asyncio.run(live_worker())
         return
 
-    if len(sys.argv) != 3 or sys.argv[2] != MARKER:
+    if len(sys.argv) != 3 or sys.argv[2] not in (MARKER, "--db-only"):
         raise SystemExit(
-            f"Usage: {Path(__file__).name} /absolute/path/snapshot.dump {MARKER}\n"
-            "This script creates and deletes ONE synthetic client in the live Remnawave panel."
+            f"Usage: {Path(__file__).name} /absolute/path/snapshot.dump "
+            f"({MARKER} | --db-only)\n"
+            "Only --confirm-live-panel-writes can change one synthetic live Remnawave client."
         )
     backup = Path(sys.argv[1])
     if not backup.is_absolute() or backup.suffix != ".dump" or not backup.is_file():
@@ -290,6 +308,7 @@ def main():
         project_root = str(Path(__file__).resolve().parent.parent)
         worker_env.update({
             "PYTHONPATH": project_root,
+            "ORION_TEST_DB_ONLY": "YES" if sys.argv[2] == "--db-only" else "NO",
             "BOT_TOKEN": "123456:LOCAL_INTEGRATION_ONLY",
             "DB_URL": clone_url,
             "ORION_DB_CLONE_ONLY": "YES",
@@ -299,12 +318,22 @@ def main():
         print("=== Migrating ONLY the cloned database ===", flush=True)
         run([sys.executable, "-c", script], env=worker_env, cwd=str(Path.cwd()))
 
-        print("=== Real Remnawave test with synthetic username ===", flush=True)
+        print(
+            "=== DB-only smoke test; no Remnawave HTTP requests ==="
+            if sys.argv[2] == "--db-only"
+            else "=== Real Remnawave test with synthetic username ===",
+            flush=True,
+        )
         run(
             [sys.executable, str(Path(__file__).resolve()), "--worker"],
             env=worker_env, cwd=str(Path.cwd()),
         )
-        print("=== COMPLETE: temporary user removed, production DB untouched ===", flush=True)
+        print(
+            "=== COMPLETE: clone DB validated, production untouched ==="
+            if sys.argv[2] == "--db-only"
+            else "=== COMPLETE: temporary user removed, production DB untouched ===",
+            flush=True,
+        )
     finally:
         if started:
             subprocess.run(
