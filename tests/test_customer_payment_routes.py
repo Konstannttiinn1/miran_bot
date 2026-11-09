@@ -17,6 +17,15 @@ from app.services import payment_checker
 from app.utils.tariffs import TRAFFIC_TOPUP, get_stars_price
 
 
+def assert_customer_cabinet_reply(mock):
+    buttons = [
+        button.callback_data
+        for row in mock.call_args.kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert buttons == ["menu:my_vpn"]
+
+
 async def customer_with_extra(telegram_id, *, primary_active=True, extra_active=True):
     owner = await db_repo.get_or_create_user(telegram_id)
     future = utcnow() + timedelta(days=12)
@@ -93,6 +102,7 @@ async def test_stars_paid_callback_provisions_selected_extra_only_once(database,
     assert paid.await_args.args[2].subscription_id == extra.id
     assert (await db_repo.get_order(order.id)).status == "paid"
     assert (await db_repo.get_subscription(owner.id)).id == primary.id
+    assert_customer_cabinet_reply(message.answer)
 
 
 @pytest.mark.asyncio
@@ -123,6 +133,7 @@ async def test_heleket_paid_poll_provisions_selected_extra_only_once(database, m
     assert paid.await_args.args[2].subscription_id == extra.id
     assert (await db_repo.get_order(order.id)).status == "paid"
     assert (await db_repo.get_subscription(owner.id)).id == primary.id
+    assert_customer_cabinet_reply(payment_checker.bot.send_message)
 
 
 @pytest.mark.asyncio
@@ -162,6 +173,7 @@ async def test_dealer_bank_confirmation_provisions_extra_only_once(database, mon
     assert (await db_repo.get_order(order.id)).status == "paid"
     assert (await db_repo.get_user_by_id(approver.id)).dealer_balance == pytest.approx(9.5)
     assert (await db_repo.get_subscription(buyer.id)).id == primary.id
+    assert_customer_cabinet_reply(dealer.bot.send_message)
 
 
 @pytest.mark.parametrize("enabled", [True, False])
