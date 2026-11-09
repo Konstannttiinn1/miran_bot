@@ -204,11 +204,8 @@ async def link(callback: types.CallbackQuery, t, db_user):
     )
 
 
-@router.callback_query(F.data.startswith("cust:reset:"))
+@router.callback_query(F.data.regexp(r"^cust:reset:[0-9]+$"))
 async def reset_prompt(callback: types.CallbackQuery, t, db_user):
-    # Confirmation has a separate callback prefix, handled below.
-    if callback.data.startswith("cust:reset:confirm:"):
-        return
     sub_id = int(callback.data.rsplit(":", 1)[-1])
     sub = await _get_owned(callback, t, db_user, sub_id)
     if sub is None:
