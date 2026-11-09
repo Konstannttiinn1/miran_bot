@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     # 0.5 = дилер покупает за 50% розничной цены, оставшиеся 50% — его маржа.
     dealer_discount: float = 0.5
     dealer_card_number: str = "0000-0000-0000-0000"
-    dealer_contact: str = "@dealer"
+    dealer_contact: str = "@Orion_Ehsan"
 
     # Тестовые ссылки, которые дилер может выдавать потенциальным клиентам
     dealer_test_days: int = 10
