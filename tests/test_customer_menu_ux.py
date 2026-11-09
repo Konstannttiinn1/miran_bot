@@ -233,6 +233,7 @@ def test_orion_support_contact_default():
     from app.config import Settings
 
     assert Settings.model_fields["support_username"].default == "@Orion_Ehsan"
+    assert Settings.model_fields["dealer_contact"].default == "@Orion_Ehsan"
 
 
 @pytest.mark.asyncio
