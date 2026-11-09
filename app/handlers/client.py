@@ -444,7 +444,9 @@ async def stars_pre_checkout(query: types.PreCheckoutQuery, t, lang, db_user):
         and int(query.total_amount) == expected
     )
     if valid and plan == TRAFFIC_TOPUP:
-        valid = await can_buy_traffic(db_user.id)
+        # A Stars top-up belongs to the VPN saved on this invoice, which may
+        # be an extra subscription. Never silently check the primary instead.
+        valid = await can_buy_traffic(db_user.id, order.subscription_id)
     await query.answer(ok=valid, error_message=None if valid else _payment_error(lang))
 
 
