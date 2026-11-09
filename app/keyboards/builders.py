@@ -104,13 +104,18 @@ def devices_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def payment_kb(t, back_callback: str = "back:plans") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+def payment_kb(
+    t, back_callback: str = "back:plans", *, allow_promo: bool = True,
+) -> InlineKeyboardMarkup:
+    rows = [
         [_btn(t, "pay_stars", "pay:stars")],
         [_btn(t, "pay_heleket", "pay:heleket")],
         [_btn(t, "pay_dealer", "pay:dealer")],
-        [_btn(t, "btn_back", back_callback)],
-    ])
+    ]
+    if allow_promo:
+        rows.append([_btn(t, "customer_apply_promo", "checkout:promo")])
+    rows.append([_btn(t, "btn_back", back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def sub_link_kb(t) -> InlineKeyboardMarkup:
