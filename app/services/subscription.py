@@ -80,6 +80,9 @@ async def _grant_vpn(
     saved = await db_repo.upsert_subscription(
         user_id, email, expire_at, traffic_limit_gb=current_limit, only_extend=True,
     )
+    await customer_subscriptions_repo.update_subscription(
+        user_id, saved.id, plan=plan,
+    )
     expire_at = saved.expire_at
     log.info("VPN выдан: user=%s plan=%s till=%s traffic=%sGB", user_id, plan, expire_at, traffic_gb)
     return link, expire_at
@@ -87,6 +90,9 @@ async def _grant_vpn(
 
 async def grant_paid_order(user_id: int, telegram_id: int, order) -> tuple[str, object]:
     """Apply only the selected order's VPN target and snapshotted promo bonus."""
+    owner = await db_repo.get_user_by_id(user_id)
+    if owner is None or owner.telegram_id != telegram_id or owner.is_blocked:
+        raise ValueError("Payment target owner is unavailable")
     bonus_days = await db_repo.get_order_promo_bonus_days(order.id)
     sub_id = order.subscription_id
     if order.plan == TRAFFIC_TOPUP:
