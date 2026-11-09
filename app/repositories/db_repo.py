@@ -851,10 +851,12 @@ async def claim_test_order(user_id: int, telegram_id: int) -> Order | None:
 
 async def get_subscription(user_id: int) -> Subscription | None:
     async with async_session_factory() as session:
-        result = await session.execute(
-            select(Subscription).where(Subscription.user_id == user_id)
+        return await session.scalar(
+            select(Subscription).where(
+                Subscription.user_id == user_id,
+                Subscription.is_primary.is_(True),
+            )
         )
-        return result.scalar_one_or_none()
 
 
 # Алиас для совместимости с payment_checker.py
@@ -865,22 +867,39 @@ async def upsert_subscription(
     user_id: int, xui_email: str, expire_at,
     traffic_limit_gb: int | None = 0, *, only_extend: bool = False,
 ) -> Subscription:
-    """Atomic insert/update; paid concurrent grants cannot shorten validity."""
+    """Update only the legacy primary VPN under its owner's row lock."""
     async with async_session_factory() as session:
-        dialect = session.get_bind().dialect.name
-        insert = pg_insert if dialect == "postgresql" else sqlite_insert
-        later = expire_at > Subscription.expire_at
-        statement = insert(Subscription).values(
-            user_id=user_id, xui_email=xui_email, expire_at=expire_at,
-            traffic_limit_gb=traffic_limit_gb or 0,
-        ).on_conflict_do_update(index_elements=[Subscription.user_id], set_={
-            "expire_at": case((later, expire_at), else_=Subscription.expire_at) if only_extend else expire_at,
-            "traffic_limit_gb": traffic_limit_gb if traffic_limit_gb is not None else Subscription.traffic_limit_gb,
-            "notified_3d": case((later, False), else_=Subscription.notified_3d),
-            "notified_1d": case((later, False), else_=Subscription.notified_1d),
-        }).returning(Subscription)
-        sub = (await session.execute(statement)).scalar_one()
-        await session.commit()
+        async with session.begin():
+            # Lock the owner even when a primary row has not yet been created.
+            owner = await session.scalar(select(User).where(User.id == user_id).with_for_update())
+            if owner is None:
+                raise ValueError("Subscription owner not found")
+            sub = await session.scalar(
+                select(Subscription).where(
+                    Subscription.user_id == user_id,
+                    Subscription.is_primary.is_(True),
+                ).with_for_update()
+            )
+            if sub is None:
+                sub = Subscription(
+                    user_id=user_id, xui_email=xui_email, expire_at=expire_at,
+                    traffic_limit_gb=traffic_limit_gb or 0,
+                    is_primary=True, status="active",
+                )
+                session.add(sub)
+            else:
+                if sub.xui_email != xui_email:
+                    raise RuntimeError("Primary VPN identity cannot be silently replaced")
+                later = expire_at > sub.expire_at
+                sub.expire_at = max(expire_at, sub.expire_at) if only_extend else expire_at
+                if traffic_limit_gb is not None:
+                    sub.traffic_limit_gb = traffic_limit_gb
+                if later:
+                    sub.notified_3d = False
+                    sub.notified_1d = False
+                sub.status = "active"
+            await session.flush()
+        await session.refresh(sub)
         return sub
 
 
@@ -888,7 +907,10 @@ async def update_subscription(user_id: int, **fields) -> None:
     """Обновляет поля подписки (expire_at, traffic_limit_gb и т.д.)."""
     async with async_session_factory() as session:
         result = await session.execute(
-            select(Subscription).where(Subscription.user_id == user_id)
+            select(Subscription).where(
+                Subscription.user_id == user_id,
+                Subscription.is_primary.is_(True),
+            )
         )
         sub = result.scalar_one_or_none()
         if sub is not None:
