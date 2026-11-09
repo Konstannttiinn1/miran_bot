@@ -4,6 +4,7 @@ from html import escape as h
 
 from app.bot import bot
 from app.config import settings
+from app.keyboards.builders import customer_cabinet_kb
 from app.middlewares.i18n import get_text
 from app.repositories import db_repo
 from app.services import heleket
@@ -59,6 +60,9 @@ async def check_pending_payments() -> None:
                 "traffic_payment_success" if order.plan == TRAFFIC_TOPUP else "payment_success",
                 link=h(link),
                 expire_date=expire_at.strftime("%d.%m.%Y"),
+            ),
+            reply_markup=customer_cabinet_kb(
+                lambda key, **kw: get_text(user.lang, key, **kw)
             ),
         )
         await notify_admins(
