@@ -946,7 +946,7 @@ async def create_order(
     user_id: int, plan: str, amount: float, currency: str,
     order_type: str = "purchase", *, retail_toman: int | None = None,
     apply_promo: bool = False, subscription_id: int | None = None,
-    new_subscription: bool = False,
+    new_subscription: bool = False, promo_code: str | None = None,
 ) -> Order:
     """Lock an activated discount coupon to exactly one checkout.
 
@@ -1003,25 +1003,55 @@ async def create_order(
                     raise ValueError("Selected subscription does not belong to the customer")
 
             coupon = None
+            promo = None
+            reserve_new_redemption = False
             if apply_promo and order_type == "purchase" and currency.lower() in {"xtr", "usd", "usdt"}:
-                row = await session.execute(
-                    select(PromoRedemption, PromoCode)
-                    .join(PromoCode, PromoRedemption.promo_id == PromoCode.id)
-                    .where(
-                        PromoRedemption.user_id == user_id,
-                        PromoRedemption.order_id.is_(None),
-                        PromoCode.kind.in_(("discount", "days_discount")),
-                        PromoCode.discount_percent > 0,
-                        PromoCode.is_active.is_(True),
-                        PromoCode.expire_at > utcnow(),
+                if promo_code:
+                    # Lock the promo itself, not only an existing redemption, so
+                    # two requests cannot exceed the activation count on PostgreSQL.
+                    promo = await session.scalar(
+                        select(PromoCode).where(
+                            func.upper(PromoCode.code) == promo_code.strip().upper()
+                        ).with_for_update()
                     )
-                    .order_by(PromoRedemption.id.desc())
-                    .limit(1)
-                    .with_for_update(of=PromoRedemption)
-                )
-                coupon = row.first()
-                if coupon:
-                    redemption, promo = coupon
+                    if (promo is None or promo.kind not in {"discount", "days_discount"}
+                            or not promo.is_active or promo.expire_at <= utcnow()
+                            or promo.discount_percent <= 0):
+                        raise ValueError("Promo code is no longer valid")
+                    redemption = await session.scalar(
+                        select(PromoRedemption).where(
+                            PromoRedemption.user_id == user_id,
+                            PromoRedemption.promo_id == promo.id,
+                        ).with_for_update()
+                    )
+                    if redemption is not None:
+                        if redemption.order_id is not None:
+                            raise ValueError("Promo code has already been used")
+                        coupon = redemption
+                    else:
+                        if promo.uses_count >= promo.max_uses:
+                            raise ValueError("Promo code has reached its limit")
+                        reserve_new_redemption = True
+                else:
+                    row = await session.execute(
+                        select(PromoRedemption, PromoCode)
+                        .join(PromoCode, PromoRedemption.promo_id == PromoCode.id)
+                        .where(
+                            PromoRedemption.user_id == user_id,
+                            PromoRedemption.order_id.is_(None),
+                            PromoCode.kind.in_(("discount", "days_discount")),
+                            PromoCode.discount_percent > 0,
+                            PromoCode.is_active.is_(True),
+                            PromoCode.expire_at > utcnow(),
+                        )
+                        .order_by(PromoRedemption.id.desc())
+                        .limit(1)
+                        .with_for_update(of=PromoRedemption)
+                    )
+                    found = row.first()
+                    if found is not None:
+                        coupon, promo = found
+                if promo is not None:
                     amount = discounted_amount(amount, promo.discount_percent, currency)
                     if retail_toman is not None:
                         retail_toman = discounted_toman(retail_toman, promo.discount_percent)
@@ -1033,13 +1063,17 @@ async def create_order(
             )
             session.add(order)
             await session.flush()
-            if coupon:
-                # Atomic compare-and-set also prevents duplicate claims with SQLite,
-                # where SELECT ... FOR UPDATE offers no row lock.
+            if reserve_new_redemption:
+                promo.uses_count += 1
+                session.add(PromoRedemption(
+                    user_id=user_id, promo_id=promo.id, order_id=order.id,
+                ))
+            elif coupon is not None:
+                # An activated coupon is bound exactly once at invoice creation.
                 claim = await session.execute(
                     update(PromoRedemption)
                     .where(
-                        PromoRedemption.id == coupon[0].id,
+                        PromoRedemption.id == coupon.id,
                         PromoRedemption.order_id.is_(None),
                     )
                     .values(order_id=order.id)
