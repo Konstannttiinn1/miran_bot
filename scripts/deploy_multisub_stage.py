@@ -282,6 +282,12 @@ def main():
         raise RuntimeError("Review code not pinned to the 251-test commit")
     if not (PRODUCTION / ".env").is_file():
         raise RuntimeError("Missing production .env")
+    tracked_env = subprocess.run(
+        ["git", "-C", str(PRODUCTION), "ls-files", "--error-unmatch", ".env"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ).returncode == 0
+    if tracked_env:
+        raise RuntimeError("Production .env is tracked: staged edit would affect Git checkout")
     if not (PRODUCTION / "venv/bin/python").is_file():
         raise RuntimeError("Missing production virtualenv")
 
@@ -293,12 +299,8 @@ def main():
     ], cwd=REVIEW)
     old_url, pg_env = fresh_pg_environment()
 
-    print("=== Stopping the existing bot ===", flush=True)
-    command(["systemctl", "stop", SERVICE])
-    stopped = True
-    if service_active():
-        raise RuntimeError("Service failed to stop; do not migrate DB")
-
+    # Prepare a recoverable configuration copy BEFORE stopping the service.
+    # A failure creating the folder must never leave production stopped.
     stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
     backup_dir = Path(f"/root/miran-multisub-rollout-{stamp}-{os.getpid()}")
     backup_dir.mkdir(mode=0o700)
@@ -309,6 +311,10 @@ def main():
     print("Backups directory:", backup_dir, flush=True)
 
     try:
+        print("=== Stopping the existing bot ===", flush=True)
+        command(["systemctl", "stop", SERVICE])
+        if service_active():
+            raise RuntimeError("Service failed to stop; do not migrate DB")
         before = asyncio.run(inspect_db(old_url))
         print(f"Snapshot baseline: subscriptions={before[0]}, orders={before[1]}", flush=True)
         print("=== Fresh PostgreSQL backup, while bot is stopped ===", flush=True)
