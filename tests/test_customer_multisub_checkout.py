@@ -158,3 +158,28 @@ async def test_cannot_open_or_reset_other_owners_vpn(database, monkeypatch):
     reset.assert_not_awaited()
     screen.assert_not_awaited()
     assert callback.answer.call_args.kwargs["show_alert"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_block_targets_all_active_personal_vpns(database, monkeypatch):
+    user = await db_repo.get_or_create_user(98351)
+    future = utcnow() + timedelta(days=10)
+    primary = await db_repo.upsert_subscription(
+        user.id, str(user.telegram_id), future, traffic_limit_gb=100,
+    )
+    order = await db_repo.create_order(
+        user.id, "month1", 1, "usdt", new_subscription=True,
+    )
+    extra = await customers.get_subscription(user.id, order.subscription_id)
+    await customers.update_subscription(
+        user.id, extra.id, status="active", expire_at=future,
+    )
+    provider = SimpleNamespace(set_enabled=AsyncMock())
+    monkeypatch.setattr(subscription, "get_vpn_provider", lambda: provider)
+
+    await subscription.set_blocked(user, True)
+    assert provider.set_enabled.await_count == 2
+    called = {c.args[0] for c in provider.set_enabled.await_args_list}
+    assert called == {primary.xui_email, extra.xui_email}
+    assert all(c.kwargs["enabled"] is False for c in provider.set_enabled.await_args_list)
+    assert (await db_repo.get_user_by_id(user.id)).is_blocked
