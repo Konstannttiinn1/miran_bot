@@ -57,6 +57,10 @@ async def init_db() -> None:
             "ON subscriptions(user_id) WHERE is_primary = TRUE"
         ))
         await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_subscriptions_user_id "
+            "ON subscriptions(user_id)"
+        ))
+        await conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_subscriptions_xui_email "
             "ON subscriptions(xui_email)"
         ))
