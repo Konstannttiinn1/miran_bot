@@ -186,6 +186,21 @@ async def reset_link(user) -> str:
 
 
 async def set_blocked(user, blocked: bool) -> None:
+    """Apply a customer block to every active personal VPN, not only the primary."""
     await db_repo.set_user_blocked(user.telegram_id, blocked)
     provider = get_vpn_provider()
-    await provider.set_enabled(str(user.telegram_id), enabled=not blocked)
+    subs = await customer_subscriptions_repo.list_subscriptions(user.id)
+    if not subs:
+        await provider.set_enabled(str(user.telegram_id), enabled=not blocked)
+        return
+    failures = []
+    for sub in subs:
+        if sub.status != "active" or sub.expire_at <= utcnow():
+            continue
+        try:
+            await provider.set_enabled(sub.xui_email, enabled=not blocked)
+        except Exception:
+            log.exception("VPN status change failed: user=%s sub=%s", user.id, sub.id)
+            failures.append(sub.id)
+    if failures:
+        raise RuntimeError(f"VPN status was not updated for subscription IDs {failures}")
