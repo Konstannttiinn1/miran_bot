@@ -303,7 +303,14 @@ def main():
             host="127.0.0.1", port=port, database="orion_clone",
         ).render_as_string(hide_password=False)
 
-        script = "import asyncio; from app.database.engine import init_db; asyncio.run(init_db())"
+        script = (
+            "import asyncio; "
+            "from pathlib import Path; "
+            "import app.database.engine as db_engine; "
+            "assert Path(db_engine.__file__).resolve().is_relative_to(Path.cwd().resolve()), "
+            "'Wrong application version for DB migration'; "
+            "asyncio.run(db_engine.init_db())"
+        )
         worker_env = {k: v for k, v in os.environ.items() if not k.startswith("PG")}
         project_root = str(Path(__file__).resolve().parent.parent)
         worker_env.update({
@@ -315,8 +322,31 @@ def main():
             "ORION_LIVE_TEST_CONFIRM": "YES",
         })
 
-        print("=== Migrating ONLY the cloned database ===", flush=True)
-        run([sys.executable, "-c", script], env=worker_env, cwd=str(Path.cwd()))
+        print("=== Migrating ONLY the cloned database with REVIEW code ===", flush=True)
+        # python -c puts cwd before PYTHONPATH. Running in /root/miran_bot
+        # silently loaded the old production migration, causing SQLSTATE 42703.
+        run([sys.executable, "-c", script], env=worker_env, cwd=project_root)
+
+        # Verify schema on the clone before any live Remnawave POST/DELETE.
+        schema_probe = """
+import asyncio
+from sqlalchemy import text
+from app.database.engine import engine
+
+async def check():
+    async with engine.connect() as conn:
+        names = set((await conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'subscriptions'"
+        ))).scalars())
+        assert {'is_primary', 'status', 'plan', 'label'} <= names, (
+            "Clone migration did not add subscription columns"
+        )
+    await engine.dispose()
+
+asyncio.run(check())
+"""
+        run([sys.executable, "-c", schema_probe], env=worker_env, cwd=project_root)
 
         print(
             "=== DB-only smoke test; no Remnawave HTTP requests ==="
