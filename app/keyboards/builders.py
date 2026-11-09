@@ -65,6 +65,13 @@ def main_menu_kb(t) -> InlineKeyboardMarkup:
     ])
 
 
+def customer_cabinet_kb(t) -> InlineKeyboardMarkup:
+    """Open the customer's VPN list after a paid order is fulfilled."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn(t, "btn_my_vpn", "menu:my_vpn")],
+    ])
+
+
 def plans_kb(
     t, with_test: bool = False, *, lang: str | None = None,
     discount_percent: int = 0,
