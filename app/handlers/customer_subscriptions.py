@@ -83,7 +83,8 @@ async def show_cabinet(callback, t, db_user) -> None:
     except TelegramBadRequest as exc:
         # Bot API restricts custom icons to eligible bots. A plain bookmark
         # must keep the subscription cabinet usable if icon rendering fails.
-        if "icon" not in str(exc).lower() and "emoji" not in str(exc).lower():
+        message = str(exc).lower()
+        if not any(part in message for part in ("icon", "emoji", "button")):
             raise
         log.warning("Customer VPN custom button icon was rejected by Telegram")
         await send_with_logo(
