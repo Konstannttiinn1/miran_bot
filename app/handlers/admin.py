@@ -188,7 +188,11 @@ async def admin_action(cb: types.CallbackQuery, t, lang, db_user):
             provider = get_vpn_provider()
             if subs:
                 for sub in subs:
+                    # A pending slot may have reached Remnawave just before a
+                    # payment-fulfilment error. Never orphan such an account.
                     if sub.status == "active":
+                        await provider.delete_client(sub.xui_email)
+                    elif sub.status == "pending" and await provider.get_client(sub.xui_email):
                         await provider.delete_client(sub.xui_email)
             else:
                 await provider.delete_client(str(tg_id))
