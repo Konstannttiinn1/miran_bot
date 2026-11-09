@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from html import escape as h
 
 from sqlalchemy import select
 
@@ -14,10 +15,16 @@ log = logging.getLogger(__name__)
 
 async def _send(user, key: str, sub) -> None:
     try:
+        lang = user.lang or "fa"
+        label = sub.label or get_text(
+            lang, "customer_primary" if sub.is_primary else "customer_unnamed",
+            id=sub.id,
+        )
         await bot.send_message(
             user.telegram_id,
-            get_text(user.lang or "fa", key,
-                     expire_date=sub.expire_at.strftime("%d.%m.%Y")),
+            f"📱 <b>{h(label)}</b>\n" + get_text(
+                lang, key, expire_date=sub.expire_at.strftime("%d.%m.%Y"),
+            ),
         )
     except Exception:
         log.exception("reminder failed user=%s", user.telegram_id)

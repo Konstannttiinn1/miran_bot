@@ -10,7 +10,7 @@ from app.config import settings
 from app.handlers.admin_orders import router as orders_router
 from app.keyboards.builders import admin_menu_kb, raw_btn
 from app.middlewares.i18n import I18nMiddleware
-from app.repositories import db_repo
+from app.repositories import db_repo, customer_subscriptions_repo
 from app.services import subscription as sub_service
 from app.services.vpn_provider import get_vpn_provider
 
@@ -183,12 +183,21 @@ async def admin_action(cb: types.CallbackQuery, t, lang, db_user):
             await sub_service.set_blocked(user, False)
             text = "✅ Разблокирован"
         elif action == "del":
-            try:
-                await get_vpn_provider().delete_client(str(tg_id))
-            except Exception:
-                log.warning("panel delete failed for %s", tg_id)
+            # All personal VPNs must be revoked before DB records are removed.
+            subs = await customer_subscriptions_repo.list_subscriptions(user.id)
+            provider = get_vpn_provider()
+            if subs:
+                for sub in subs:
+                    # A pending slot may have reached Remnawave just before a
+                    # payment-fulfilment error. Never orphan such an account.
+                    if sub.status == "active":
+                        await provider.delete_client(sub.xui_email)
+                    elif sub.status == "pending" and await provider.get_client(sub.xui_email):
+                        await provider.delete_client(sub.xui_email)
+            else:
+                await provider.delete_client(str(tg_id))
             await db_repo.delete_user_full(tg_id)
-            await cb.answer("🗑 Удалён из базы и панели", show_alert=True)
+            await cb.answer("🗑 Все VPN удалены из базы и панели", show_alert=True)
             return
         else:
             text = "❓"

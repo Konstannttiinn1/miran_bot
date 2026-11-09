@@ -180,54 +180,28 @@ async def back_main(callback: types.CallbackQuery, t, lang, db_user, state: FSMC
 
 @router.callback_query(F.data == "menu:my_vpn")
 async def my_vpn(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
+    from app.handlers.customer_subscriptions import show_cabinet
+    await state.clear()
     await callback.answer()
-    sub = await db_repo.get_subscription(db_user.id)
-    now = utcnow()
-
-    if sub is None or sub.expire_at <= now:
-        with_test = await db_repo.can_claim_test(db_user.id)
-        await state.set_state(Purchase.choosing_plan)
-        await state.update_data(plans_with_test=with_test, plan=None, order_id=None)
-        promo = await db_repo.get_active_purchase_promo(db_user.id)
-        screen_text = get_plan_intro(t, lang, promo)
-        if sub is not None:
-            screen_text = (
-                t("subscription_expired", expire_date=sub.expire_at.strftime("%d.%m.%Y"))
-                + "\n\n"
-                + screen_text
-            )
-        await send_with_logo(
-            callback,
-            screen_text,
-            reply_markup=plans_kb(
-                t, with_test=with_test, lang=lang,
-                discount_percent=promo.discount_percent if promo else 0,
-            ),
-        )
-        return
-
-    await send_with_logo(
-        callback,
-        t("active_subscription",
-          expire_date=sub.expire_at.strftime("%d.%m.%Y"),
-          traffic=sub.traffic_limit_gb),
-        reply_markup=sub_link_kb(t),
-    )
+    await show_cabinet(callback, t, db_user)
 
 
 @router.callback_query(F.data == "menu:buy")
 async def buy(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
-    await state.set_state(Purchase.choosing_plan)
-    await state.update_data(plans_with_test=False, plan=None, order_id=None)
-    await callback.answer()
-    promo = await db_repo.get_active_purchase_promo(db_user.id)
-    await send_with_logo(
-        callback, get_plan_intro(t, lang, promo),
-        reply_markup=plans_kb(
-            t, with_test=False, lang=lang,
-            discount_percent=promo.discount_percent if promo else 0,
-        ),
-    )
+    from app.handlers.customer_subscriptions import add
+    await add(callback, t, lang, db_user, state)
+
+
+@router.callback_query(F.data == "menu:trial")
+async def menu_trial(callback: types.CallbackQuery, t, db_user, state: FSMContext):
+    """Free trial is available only to first-time personal customers."""
+    if db_user.role == "dealer" or db_user.is_blocked:
+        await callback.answer(t("test_unavailable"), show_alert=True)
+        return
+    # A main-menu action must not inherit stale checkout FSM state.
+    await state.clear()
+    from app.handlers.client import activate_trial
+    await activate_trial(callback, t, db_user, state)
 
 
 @router.callback_query(F.data == "menu:get_link")

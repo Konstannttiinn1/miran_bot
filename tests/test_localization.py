@@ -161,7 +161,7 @@ async def test_dealer_screens_render_in_the_selected_language(monkeypatch, lang,
 @pytest.mark.parametrize("screen", ["test_start", "test_list", "promo_list"])
 async def test_dealer_tools_forms_and_lists_have_real_line_breaks(monkeypatch, lang, screen):
     from app.repositories import dealer_tools_repo
-    user = SimpleNamespace(id=1, role="dealer")
+    user = SimpleNamespace(id=1, telegram_id=40005, role="dealer")
     callback = SimpleNamespace(answer=AsyncMock())
     state = SimpleNamespace(clear=AsyncMock(), set_state=AsyncMock())
     render = AsyncMock()
@@ -213,7 +213,11 @@ async def test_saved_language_is_used_on_the_next_callback(database, monkeypatch
 async def test_reminders_use_the_recipient_language(monkeypatch, lang):
     send = AsyncMock()
     monkeypatch.setattr(reminder.bot, "send_message", send)
-    await reminder._send(SimpleNamespace(telegram_id=40003, lang=lang), "expiring_3d", SimpleNamespace(expire_at=utcnow()))
+    await reminder._send(
+        SimpleNamespace(telegram_id=40003, lang=lang),
+        "expiring_3d",
+        SimpleNamespace(id=1, label="", is_primary=True, expire_at=utcnow()),
+    )
     assert_language(send.call_args.args[1], lang)
 
 

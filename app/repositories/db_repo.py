@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -113,8 +113,9 @@ async def delete_user_full(telegram_id: int) -> None:
         )
         for redemption in redemptions.scalars().all():
             await session.delete(redemption)
-        for model, column in ((Subscription, Subscription.user_id),
-                              (Order, Order.user_id),
+        # Orders now reference individual subscription IDs: delete them first.
+        for model, column in ((Order, Order.user_id),
+                              (Subscription, Subscription.user_id),
                               (DealerSubscription, DealerSubscription.dealer_id),
                               (DealerTest, DealerTest.dealer_id),
                               (PromoCode, PromoCode.dealer_id),
@@ -259,6 +260,11 @@ async def reject_dealer_order(order_id: int, dealer_id: int) -> Order | None:
             order.status = "failed"
             order.dealer_id = dealer_id
             await release_failed_order_promo(session, order_id)
+            # Rejected bank receipts never reached the panel; free the reserved slot.
+            if order.subscription_id is not None:
+                slot = await session.get(Subscription, order.subscription_id)
+                if slot is not None and slot.status == "pending" and not slot.is_primary:
+                    slot.status = "cancelled"
             session.add(
                 DealerLog(
                     dealer_id=dealer_id,
@@ -869,40 +875,34 @@ async def upsert_subscription(
     user_id: int, xui_email: str, expire_at,
     traffic_limit_gb: int | None = 0, *, only_extend: bool = False,
 ) -> Subscription:
-    """Update only the legacy primary VPN under its owner's row lock."""
+    """Atomically update only the primary VPN, preserving independent extra rows."""
     async with async_session_factory() as session:
-        async with session.begin():
-            # Lock the owner even when a primary row has not yet been created.
-            owner = await session.scalar(select(User).where(User.id == user_id).with_for_update())
-            if owner is None:
-                raise ValueError("Subscription owner not found")
-            sub = await session.scalar(
-                select(Subscription).where(
-                    Subscription.user_id == user_id,
-                    Subscription.is_primary.is_(True),
-                ).with_for_update()
-            )
-            if sub is None:
-                sub = Subscription(
-                    user_id=user_id, xui_email=xui_email, expire_at=expire_at,
-                    traffic_limit_gb=traffic_limit_gb or 0,
-                    is_primary=True, status="active",
-                )
-                session.add(sub)
-            else:
-                if sub.xui_email != xui_email:
-                    raise RuntimeError("Primary VPN identity cannot be silently replaced")
-                later = expire_at > sub.expire_at
-                sub.expire_at = max(expire_at, sub.expire_at) if only_extend else expire_at
-                if traffic_limit_gb is not None:
-                    sub.traffic_limit_gb = traffic_limit_gb
-                if later:
-                    sub.notified_3d = False
-                    sub.notified_1d = False
-                sub.status = "active"
-            await session.flush()
-        await session.refresh(sub)
-        return sub
+        dialect = session.get_bind().dialect.name
+        if dialect not in {"postgresql", "sqlite"}:
+            raise RuntimeError(f"Unsupported subscription database: {dialect}")
+        insert = pg_insert if dialect == "postgresql" else sqlite_insert
+        later = expire_at > Subscription.expire_at
+        statement = insert(Subscription).values(
+            user_id=user_id, xui_email=xui_email, expire_at=expire_at,
+            is_primary=True, status="active",
+            traffic_limit_gb=traffic_limit_gb or 0,
+        ).on_conflict_do_update(
+            index_elements=[Subscription.user_id],
+            index_where=text("is_primary = TRUE"),
+            set_={
+                "expire_at": case((later, expire_at), else_=Subscription.expire_at) if only_extend else expire_at,
+                "traffic_limit_gb": traffic_limit_gb if traffic_limit_gb is not None else Subscription.traffic_limit_gb,
+                "notified_3d": case((later, False), else_=Subscription.notified_3d),
+                "notified_1d": case((later, False), else_=Subscription.notified_1d),
+                "status": "active",
+            },
+            where=Subscription.xui_email == xui_email,
+        ).returning(Subscription)
+        result = (await session.execute(statement)).scalar_one_or_none()
+        if result is None:
+            raise RuntimeError("Primary VPN identity cannot be silently replaced")
+        await session.commit()
+        return result
 
 
 async def update_subscription(user_id: int, **fields) -> None:
@@ -946,7 +946,7 @@ async def create_order(
     user_id: int, plan: str, amount: float, currency: str,
     order_type: str = "purchase", *, retail_toman: int | None = None,
     apply_promo: bool = False, subscription_id: int | None = None,
-    new_subscription: bool = False,
+    new_subscription: bool = False, promo_code: str | None = None,
 ) -> Order:
     """Lock an activated discount coupon to exactly one checkout.
 
@@ -1003,25 +1003,55 @@ async def create_order(
                     raise ValueError("Selected subscription does not belong to the customer")
 
             coupon = None
+            promo = None
+            reserve_new_redemption = False
             if apply_promo and order_type == "purchase" and currency.lower() in {"xtr", "usd", "usdt"}:
-                row = await session.execute(
-                    select(PromoRedemption, PromoCode)
-                    .join(PromoCode, PromoRedemption.promo_id == PromoCode.id)
-                    .where(
-                        PromoRedemption.user_id == user_id,
-                        PromoRedemption.order_id.is_(None),
-                        PromoCode.kind.in_(("discount", "days_discount")),
-                        PromoCode.discount_percent > 0,
-                        PromoCode.is_active.is_(True),
-                        PromoCode.expire_at > utcnow(),
+                if promo_code:
+                    # Lock the promo itself, not only an existing redemption, so
+                    # two requests cannot exceed the activation count on PostgreSQL.
+                    promo = await session.scalar(
+                        select(PromoCode).where(
+                            func.upper(PromoCode.code) == promo_code.strip().upper()
+                        ).with_for_update()
                     )
-                    .order_by(PromoRedemption.id.desc())
-                    .limit(1)
-                    .with_for_update(of=PromoRedemption)
-                )
-                coupon = row.first()
-                if coupon:
-                    redemption, promo = coupon
+                    if (promo is None or promo.kind not in {"discount", "days_discount"}
+                            or not promo.is_active or promo.expire_at <= utcnow()
+                            or promo.discount_percent <= 0):
+                        raise ValueError("Promo code is no longer valid")
+                    redemption = await session.scalar(
+                        select(PromoRedemption).where(
+                            PromoRedemption.user_id == user_id,
+                            PromoRedemption.promo_id == promo.id,
+                        ).with_for_update()
+                    )
+                    if redemption is not None:
+                        if redemption.order_id is not None:
+                            raise ValueError("Promo code has already been used")
+                        coupon = redemption
+                    else:
+                        if promo.uses_count >= promo.max_uses:
+                            raise ValueError("Promo code has reached its limit")
+                        reserve_new_redemption = True
+                else:
+                    row = await session.execute(
+                        select(PromoRedemption, PromoCode)
+                        .join(PromoCode, PromoRedemption.promo_id == PromoCode.id)
+                        .where(
+                            PromoRedemption.user_id == user_id,
+                            PromoRedemption.order_id.is_(None),
+                            PromoCode.kind.in_(("discount", "days_discount")),
+                            PromoCode.discount_percent > 0,
+                            PromoCode.is_active.is_(True),
+                            PromoCode.expire_at > utcnow(),
+                        )
+                        .order_by(PromoRedemption.id.desc())
+                        .limit(1)
+                        .with_for_update(of=PromoRedemption)
+                    )
+                    found = row.first()
+                    if found is not None:
+                        coupon, promo = found
+                if promo is not None:
                     amount = discounted_amount(amount, promo.discount_percent, currency)
                     if retail_toman is not None:
                         retail_toman = discounted_toman(retail_toman, promo.discount_percent)
@@ -1033,13 +1063,17 @@ async def create_order(
             )
             session.add(order)
             await session.flush()
-            if coupon:
-                # Atomic compare-and-set also prevents duplicate claims with SQLite,
-                # where SELECT ... FOR UPDATE offers no row lock.
+            if reserve_new_redemption:
+                promo.uses_count += 1
+                session.add(PromoRedemption(
+                    user_id=user_id, promo_id=promo.id, order_id=order.id,
+                ))
+            elif coupon is not None:
+                # An activated coupon is bound exactly once at invoice creation.
                 claim = await session.execute(
                     update(PromoRedemption)
                     .where(
-                        PromoRedemption.id == coupon[0].id,
+                        PromoRedemption.id == coupon.id,
                         PromoRedemption.order_id.is_(None),
                     )
                     .values(order_id=order.id)

@@ -6,6 +6,7 @@ class Purchase(StatesGroup):
     choosing_plan = State()
     choosing_devices = State()
     choosing_payment = State()
+    entering_promo = State()
     waiting_receipt = State()
 
 

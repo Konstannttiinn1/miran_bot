@@ -239,6 +239,36 @@ async def deactivate_any_promo(promo_id: int) -> bool:
         return True
 
 
+async def preview_checkout_promo(user_id: int, raw_code: str) -> tuple[str, PromoCode | None]:
+    """Validate a code at checkout without consuming an activation quota."""
+    code = raw_code.strip().upper()
+    if not code:
+        return "not_found", None
+    async with async_session_factory() as session:
+        promo = await session.scalar(
+            select(PromoCode).where(func.upper(PromoCode.code) == code)
+        )
+        if promo is None:
+            return "not_found", None
+        if not promo.is_active or promo.expire_at <= utcnow():
+            return "expired", None
+        if promo.kind not in {"discount", "days_discount"} or promo.discount_percent <= 0:
+            return "not_discount", None
+        previous = await session.scalar(
+            select(PromoRedemption).where(
+                PromoRedemption.promo_id == promo.id,
+                PromoRedemption.user_id == user_id,
+            )
+        )
+        if previous is not None:
+            if previous.order_id is None:
+                return "ok", promo
+            return "already_used", None
+        if promo.uses_count >= promo.max_uses:
+            return "exhausted", None
+        return "ok", promo
+
+
 async def reserve_promo_redemption(
     user_id: int,
     raw_code: str,

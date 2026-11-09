@@ -27,7 +27,7 @@ async def test_old_trial_button_cannot_issue_a_second_trial(database, monkeypatc
     user = await db_repo.get_or_create_user(10001)
     provision = AsyncMock(return_value="test-sub-id")
     monkeypatch.setattr(subscription_service, "get_vpn_provider", lambda: SimpleNamespace(add_client=provision))
-    state = SimpleNamespace(clear=AsyncMock())
+    state = SimpleNamespace(clear=AsyncMock(), get_data=AsyncMock(return_value={}))
     for _ in range(2):
         await client.choose_plan(trial_callback(), lambda key: key, "en", user, state)
     assert provision.await_count == 1
@@ -48,7 +48,10 @@ async def test_parallel_callbacks_reserve_exactly_one_test(database, monkeypatch
     monkeypatch.setattr(subscription_service, "get_vpn_provider", lambda: SimpleNamespace(add_client=provision))
     callbacks = [trial_callback() for _ in range(16)]
     await asyncio.gather(*(
-        client.choose_plan(cb, lambda key: key, "en", user, SimpleNamespace(clear=AsyncMock()))
+        client.choose_plan(
+            cb, lambda key: key, "en", user,
+            SimpleNamespace(clear=AsyncMock(), get_data=AsyncMock(return_value={})),
+        )
         for cb in callbacks
     ))
     assert provision.await_count == 1
@@ -81,7 +84,8 @@ async def test_failed_or_ambiguous_provisioning_does_not_allow_repeat(database, 
     monkeypatch.setattr(subscription_service, "get_vpn_provider", lambda: SimpleNamespace(add_client=provision))
     for _ in range(2):
         await client.choose_plan(
-            trial_callback(), lambda key: key, "en", user, SimpleNamespace(clear=AsyncMock()),
+            trial_callback(), lambda key: key, "en", user,
+            SimpleNamespace(clear=AsyncMock(), get_data=AsyncMock(return_value={})),
         )
     assert provision.await_count == 1
     async with database() as session:

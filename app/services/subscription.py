@@ -80,6 +80,9 @@ async def _grant_vpn(
     saved = await db_repo.upsert_subscription(
         user_id, email, expire_at, traffic_limit_gb=current_limit, only_extend=True,
     )
+    await customer_subscriptions_repo.update_subscription(
+        user_id, saved.id, plan=plan,
+    )
     expire_at = saved.expire_at
     log.info("VPN выдан: user=%s plan=%s till=%s traffic=%sGB", user_id, plan, expire_at, traffic_gb)
     return link, expire_at
@@ -87,6 +90,9 @@ async def _grant_vpn(
 
 async def grant_paid_order(user_id: int, telegram_id: int, order) -> tuple[str, object]:
     """Apply only the selected order's VPN target and snapshotted promo bonus."""
+    owner = await db_repo.get_user_by_id(user_id)
+    if owner is None or owner.telegram_id != telegram_id or owner.is_blocked:
+        raise ValueError("Payment target owner is unavailable")
     bonus_days = await db_repo.get_order_promo_bonus_days(order.id)
     sub_id = order.subscription_id
     if order.plan == TRAFFIC_TOPUP:
@@ -186,6 +192,21 @@ async def reset_link(user) -> str:
 
 
 async def set_blocked(user, blocked: bool) -> None:
+    """Apply a customer block to every active personal VPN, not only the primary."""
     await db_repo.set_user_blocked(user.telegram_id, blocked)
     provider = get_vpn_provider()
-    await provider.set_enabled(str(user.telegram_id), enabled=not blocked)
+    subs = await customer_subscriptions_repo.list_subscriptions(user.id)
+    if not subs:
+        await provider.set_enabled(str(user.telegram_id), enabled=not blocked)
+        return
+    failures = []
+    for sub in subs:
+        if sub.status != "active" or sub.expire_at <= utcnow():
+            continue
+        try:
+            await provider.set_enabled(sub.xui_email, enabled=not blocked)
+        except Exception:
+            log.exception("VPN status change failed: user=%s sub=%s", user.id, sub.id)
+            failures.append(sub.id)
+    if failures:
+        raise RuntimeError(f"VPN status was not updated for subscription IDs {failures}")

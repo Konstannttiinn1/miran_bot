@@ -5,6 +5,7 @@ from app.bot import bot, dp
 from app.database.engine import init_db
 from app.handlers.admin import router as admin_router
 from app.handlers.client import router as client_router
+from app.handlers.customer_subscriptions import router as customer_router
 from app.handlers.dealer import router as dealer_router
 from app.handlers.dealer_tools import router as dealer_tools_router
 from app.handlers.migration import router as migration_router
@@ -21,6 +22,7 @@ async def main():
     dp.include_router(start_router)
     dp.include_router(migration_router)
     dp.include_router(client_router)
+    dp.include_router(customer_router)
     dp.include_router(dealer_tools_router)
     dp.include_router(dealer_router)
     dp.include_router(admin_router)

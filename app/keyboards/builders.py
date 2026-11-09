@@ -56,12 +56,25 @@ def language_kb(t=None, with_back: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def main_menu_kb(t) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+def main_menu_kb(t, *, with_trial: bool = False) -> InlineKeyboardMarkup:
+    """Free trial is offered only when the caller confirms eligibility."""
+    rows = [
+        [_btn(t, "btn_buy", "menu:buy")],
         [_btn(t, "btn_my_vpn", "menu:my_vpn")],
-        [_btn(t, "btn_promo", "menu:promo")],
+    ]
+    if with_trial:
+        rows.append([_btn(t, "btn_trial_period", "menu:trial")])
+    rows.extend([
         [_btn(t, "btn_support", "menu:support")],
         [_btn(t, "btn_lang", "menu:lang")],
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def customer_cabinet_kb(t) -> InlineKeyboardMarkup:
+    """Open the customer's VPN list after a paid order is fulfilled."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn(t, "btn_my_vpn", "menu:my_vpn")],
     ])
 
 
@@ -104,13 +117,21 @@ def devices_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def payment_kb(t, back_callback: str = "back:plans") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+def payment_kb(
+    t, back_callback: str = "back:plans", *, allow_promo: bool = True,
+) -> InlineKeyboardMarkup:
+    rows = [
         [_btn(t, "pay_stars", "pay:stars")],
-        [_btn(t, "pay_heleket", "pay:heleket")],
-        [_btn(t, "pay_dealer", "pay:dealer")],
-        [_btn(t, "btn_back", back_callback)],
-    ])
+    ]
+    # Hide a provider that has been administratively disabled. Its existing
+    # invoices remain in the database for reconciliation once access returns.
+    if settings.heleket_enabled:
+        rows.append([_btn(t, "pay_heleket", "pay:heleket")])
+    rows.append([_btn(t, "pay_dealer", "pay:dealer")])
+    if allow_promo:
+        rows.append([_btn(t, "customer_apply_promo", "checkout:promo")])
+    rows.append([_btn(t, "btn_back", back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def sub_link_kb(t) -> InlineKeyboardMarkup:

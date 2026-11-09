@@ -54,6 +54,9 @@ async def test_admin_menu_shows_owners_and_disables_dealer_coupon(database, monk
     dealer = await db_repo.get_or_create_user(97812, username="promoseller")
     await db_repo.set_user_role(dealer.telegram_id, "dealer")
     dealer = await db_repo.get_user_by_id(dealer.id)
+    outsider = await db_repo.get_or_create_user(97813, username="other_seller")
+    await db_repo.set_user_role(outsider.telegram_id, "dealer")
+    outsider = await db_repo.get_user_by_id(outsider.id)
     promo = await dealer_tools_repo.create_promo(
         dealer.id, "CONTROL30", "discount", 0, 0,
         utcnow() + timedelta(days=7), 4, discount_percent=30,
@@ -79,11 +82,15 @@ async def test_admin_menu_shows_owners_and_disables_dealer_coupon(database, monk
 
     send_screen.reset_mock()
     await dealer_tools.promo_card(callback, t, dealer)
+    assert "CONTROL30" in send_screen.call_args.args[1]
+
+    send_screen.reset_mock()
+    await dealer_tools.promo_card(callback, t, outsider)
     send_screen.assert_not_awaited()
     assert callback.answer.call_args.kwargs["show_alert"] is True
 
     callback.data = f"dealer:promo:disable:{promo.id}:0"
-    await dealer_tools.promo_disable(callback, t, dealer)
+    await dealer_tools.promo_disable(callback, t, outsider)
     assert (await dealer_tools_repo.get_any_promo(promo.id)).is_active
 
     callback.data = f"dealer:promo:disable:{promo.id}:0"

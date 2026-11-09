@@ -8,9 +8,10 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPri
 from app.bot import bot
 from app.config import settings
 from app.handlers.states import Purchase
-from app.keyboards.builders import back_kb, dealer_confirm_kb, devices_kb, payment_kb, plans_kb
+from app.keyboards.builders import back_kb, customer_cabinet_kb, dealer_confirm_kb, devices_kb, payment_kb, plans_kb
 from app.middlewares.i18n import I18nMiddleware, get_text
-from app.repositories import db_repo
+from app.repositories import db_repo, dealer_tools_repo, customer_subscriptions_repo
+from app.repositories.customer_subscriptions_repo import SubscriptionLimitReached
 from app.services import heleket
 from app.services.vpn_provider import provider_name
 from app.services.subscription import TrialUnavailableError, can_buy_traffic, grant_paid_order, grant_vpn
@@ -109,6 +110,37 @@ def _invoice_copy(lang: str, plan: str, stars: int) -> tuple[str, str, str]:
     )
 
 
+async def activate_trial(callback: types.CallbackQuery, t, db_user, state: FSMContext):
+    """Shared trial entry point for main menu and legacy plan selection."""
+    flow = await state.get_data()
+    if flow.get("purchase_mode") in {"new", "renew", "topup"}:
+        await callback.answer(t("test_unavailable"), show_alert=True)
+        return
+    # A new user may claim a trial once. The repository's atomic claim
+    # remains authoritative if another request races this check.
+    if (db_user.role == "dealer"
+            or await db_repo.get_subscription(db_user.id) is not None
+            or not await db_repo.can_claim_test(db_user.id)):
+        await callback.answer(t("test_unavailable"), show_alert=True)
+        return
+    await state.clear()
+    # Do not hold the callback open while the VPN panel responds.
+    await callback.answer()
+    try:
+        link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, "test")
+    except TrialUnavailableError:
+        await callback.message.answer(t("test_unavailable"))
+        return
+    except Exception:
+        log.exception("test grant failed")
+        await callback.message.answer(t("test_activation_failed"))
+        return
+    await callback.message.answer(
+        t("test_activated") + "\n" +
+        apply_emoji(f"🔗 {h(link)}", settings.use_custom_emoji)
+    )
+
+
 @router.callback_query(F.data.startswith("plan:"))
 async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     plan = callback.data.split(":")[1]
@@ -117,25 +149,11 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
         return
 
     if plan == "test":
-        await state.clear()
-        # Не держим callback открытым, пока панель отвечает (до 30 секунд).
-        await callback.answer()
-        try:
-            link, expire_at = await grant_vpn(db_user.id, db_user.telegram_id, "test")
-        except TrialUnavailableError:
-            await callback.message.answer(t("test_unavailable"))
-            return
-        except Exception:
-            log.exception("test grant failed")
-            await callback.message.answer(t("test_activation_failed"))
-            return
-        await callback.message.answer(
-            t("test_activated") + "\n" +
-            apply_emoji(f"🔗 {h(link)}", settings.use_custom_emoji)
-        )
+        await activate_trial(callback, t, db_user, state)
         return
 
-    if plan == TRAFFIC_TOPUP and not await can_buy_traffic(db_user.id):
+    active_data = await state.get_data()
+    if plan == TRAFFIC_TOPUP and not await can_buy_traffic(db_user.id, active_data.get("subscription_id")):
         await callback.answer(strip_custom_emoji_tags(t("traffic_requires_subscription")), show_alert=True)
         return
     if get_tariff(plan).get("monthly"):
@@ -146,7 +164,8 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
         notice = get_promo_notice(t, promo)
         await send_with_logo(
             callback,
-            t("select_devices", months=PLANS[plan]["months"])
+            (await _target_caption(t, db_user.id, active_data)) + "\n\n"
+            + t("select_devices", months=PLANS[plan]["months"])
             + ("\n\n" + notice if notice else ""),
             reply_markup=devices_kb(
                 plan, t, discount_percent=promo.discount_percent if promo else 0,
@@ -159,7 +178,54 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
     text = t("select_payment")
     if plan == TRAFFIC_TOPUP:
         text = t("traffic_topup_intro", price=get_price_display(plan, lang)) + "\n\n" + text
-    await send_with_logo(callback, text, reply_markup=payment_kb(t))
+    await send_with_logo(
+        callback, text, reply_markup=payment_kb(t, allow_promo=False),
+    )
+
+
+async def _target_caption(t, user_id: int, flow: dict) -> str:
+    """Make the target VPN explicit before invoice issuance."""
+    mode = flow.get("purchase_mode", "primary")
+    if mode == "new":
+        return t("customer_checkout_new")
+    if mode == "renew":
+        sub_id = flow.get("subscription_id")
+        sub = await customer_subscriptions_repo.get_subscription(user_id, sub_id) if sub_id else None
+        if sub is None:
+            return t("customer_unavailable")
+        name = sub.label or (
+            t("customer_primary") if sub.is_primary else t("customer_unnamed", id=sub.id)
+        )
+        return t("customer_selected", name=h(name))
+    return t("customer_checkout_primary")
+
+
+async def _checkout_promo(user_id: int, data: dict):
+    code = data.get("checkout_promo_code")
+    if code:
+        status, promo = await dealer_tools_repo.preview_checkout_promo(user_id, code)
+        return promo if status == "ok" else None
+    return await db_repo.get_active_purchase_promo(user_id)
+
+
+async def _show_checkout(target, t, lang, db_user, state: FSMContext) -> None:
+    data = await state.get_data()
+    plan = data.get("plan")
+    if plan not in PLANS or not PLANS[plan].get("monthly"):
+        await send_with_logo(target, t("payment_error"))
+        return
+    promo = await _checkout_promo(db_user.id, data)
+    percent = promo.discount_percent if promo else 0
+    price = get_promo_price_display(plan, lang, percent, markup=True)
+    notice = get_promo_notice(t, promo)
+    back_callback = f"plan:{get_period_plan(plan)}"
+    target_text = await _target_caption(t, db_user.id, data)
+    text = target_text + "\n\n" + ((notice + "\n\n") if notice else "") + t(
+        "purchase_summary", product=_product_label(plan, lang), price=price,
+    ) + "\n\n" + t("select_payment")
+    await send_with_logo(
+        target, text, reply_markup=payment_kb(t, back_callback, allow_promo=True),
+    )
 
 
 @router.callback_query(F.data.startswith("device:"))
@@ -168,21 +234,43 @@ async def choose_devices(callback: types.CallbackQuery, t, lang, db_user, state:
     if plan not in PLANS or not PLANS[plan].get("monthly"):
         await callback.answer(strip_custom_emoji_tags(t("invalid_plan")), show_alert=True)
         return
-    promo = await db_repo.get_active_purchase_promo(db_user.id)
-    price = get_promo_price_display(
-        plan, lang, promo.discount_percent if promo else 0, markup=True,
-    )
-    notice = get_promo_notice(t, promo)
     await state.update_data(plan=plan, order_id=None)
     await state.set_state(Purchase.choosing_payment)
     await callback.answer()
+    await _show_checkout(callback, t, lang, db_user, state)
+
+
+@router.callback_query(F.data == "checkout:promo")
+async def checkout_promo_start(callback: types.CallbackQuery, t, db_user, state: FSMContext):
+    data = await state.get_data()
+    if data.get("plan") not in PLANS or data.get("plan") == "test":
+        await callback.answer(t("payment_error"), show_alert=True)
+        return
+    await state.set_state(Purchase.entering_promo)
+    await callback.answer()
     await send_with_logo(
-        callback,
-        (notice + "\n\n" if notice else "")
-        + t("purchase_summary", product=_product_label(plan, lang), price=price)
-        + "\n\n" + t("select_payment"),
-        reply_markup=payment_kb(t, f"plan:{get_period_plan(plan)}"),
+        callback, t("customer_promo_ask"),
+        reply_markup=back_kb(t, "checkout:resume"),
     )
+
+
+@router.message(Purchase.entering_promo)
+async def checkout_promo_enter(message: types.Message, t, lang, db_user, state: FSMContext):
+    code = (message.text or "").strip().upper()
+    status, promo = await dealer_tools_repo.preview_checkout_promo(db_user.id, code)
+    if status != "ok" or promo is None:
+        await message.answer(t("customer_promo_invalid"))
+        return
+    await state.update_data(checkout_promo_code=promo.code)
+    await state.set_state(Purchase.choosing_payment)
+    await _show_checkout(message, t, lang, db_user, state)
+
+
+@router.callback_query(F.data == "checkout:resume")
+async def checkout_resume(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
+    await state.set_state(Purchase.choosing_payment)
+    await callback.answer()
+    await _show_checkout(callback, t, lang, db_user, state)
 
 
 @router.callback_query(F.data == "back:plans")
@@ -198,7 +286,7 @@ async def back_to_plans(callback: types.CallbackQuery, t, lang, db_user, state: 
     promo = await db_repo.get_active_purchase_promo(db_user.id)
     await send_with_logo(
         callback,
-        get_plan_intro(t, lang, promo),
+        (await _target_caption(t, db_user.id, data)) + "\n\n" + get_plan_intro(t, lang, promo),
         reply_markup=plans_kb(
             t, with_test=with_test, lang=lang,
             discount_percent=promo.discount_percent if promo else 0,
@@ -213,12 +301,16 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
     plan = data.get("plan", "")
     await callback.answer()
 
+    if db_user.is_blocked:
+        await state.clear()
+        await send_with_logo(callback, t("access_denied"))
+        return
     if not is_sale_product(plan) or plan == "test":
         await state.clear()
         await send_with_logo(callback, t("payment_error"))
         return
 
-    if plan == TRAFFIC_TOPUP and not await can_buy_traffic(db_user.id):
+    if plan == TRAFFIC_TOPUP and not await can_buy_traffic(db_user.id, data.get("subscription_id")):
         await state.clear()
         await send_with_logo(callback, t("traffic_requires_subscription"))
         return
@@ -226,15 +318,39 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
     if get_tariff(plan).get("monthly") and provider_name() != "remnawave":
         await send_with_logo(callback, t("sales_unavailable"))
         return
-    back_callback = f"plan:{get_period_plan(plan)}" if get_tariff(plan).get("monthly") else "back:plans"
+    back_callback = (
+        f"plan:{get_period_plan(plan)}" if get_tariff(plan).get("monthly")
+        else (
+            f"cust:card:{data['subscription_id']}"
+            if data.get("subscription_id") is not None else "back:plans"
+        )
+    )
+    target = {
+        "subscription_id": data.get("subscription_id"),
+        "new_subscription": data.get("purchase_mode") == "new",
+        "promo_code": data.get("checkout_promo_code"),
+    }
+
+    async def create_checkout_order(amount, currency, **extras):
+        try:
+            return await db_repo.create_order(
+                db_user.id, plan, amount, currency, order_type=order_type,
+                apply_promo=True, **target, **extras,
+            )
+        except ValueError:
+            log.info("Checkout rejected, user=%s plan=%s mode=%s", db_user.id, plan, data.get("purchase_mode"))
+            await send_with_logo(
+                callback, t("customer_checkout_changed"),
+                reply_markup=payment_kb(t, back_callback, allow_promo=plan != TRAFFIC_TOPUP),
+            )
+            return None
 
     if method == "stars":
-        await state.clear()
         original_stars = get_stars_price(plan, settings.stars_reward_usd)
-        order = await db_repo.create_order(
-            db_user.id, plan, original_stars, "xtr", order_type=order_type,
-            apply_promo=True,
-        )
+        order = await create_checkout_order(original_stars, "xtr")
+        if order is None:
+            return
+        await state.clear()
         stars = int(order.amount)
         title, description, label = _invoice_copy(lang, plan, stars)
         try:
@@ -259,10 +375,11 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
             settings.dealer_discount,
         )
         # order.amount для дилерского заказа всегда хранится в USD.
-        order = await db_repo.create_order(
-            db_user.id, plan, dealer_usd, "usd", order_type=order_type,
-            retail_toman=retail_toman, apply_promo=True,
+        order = await create_checkout_order(
+            dealer_usd, "usd", retail_toman=retail_toman,
         )
+        if order is None:
+            return
         retail_toman = await db_repo.get_order_retail_toman(order.id) or retail_toman
         await state.update_data(plan=plan, order_id=order.id, retail_toman=retail_toman)
         await state.set_state(Purchase.waiting_receipt)
@@ -283,15 +400,14 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
             await send_with_logo(
                 callback,
                 t("pay_temporarily_disabled"),
-                reply_markup=payment_kb(t, back_callback),
+                reply_markup=payment_kb(t, back_callback, allow_promo=plan != TRAFFIC_TOPUP),
             )
             return
-        await state.clear()
         price_usd = get_usd_price(plan)
-        order = await db_repo.create_order(
-            db_user.id, plan, price_usd, "usdt", order_type=order_type,
-            apply_promo=True,
-        )
+        order = await create_checkout_order(price_usd, "usdt")
+        if order is None:
+            return
+        await state.clear()
         try:
             invoice = await heleket.create_invoice(float(order.amount), order.id)
         except Exception:
@@ -310,7 +426,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
     await send_with_logo(
         callback,
         t("payment_placeholder") + f"\n\n{plan} ➜ {method}",
-        reply_markup=payment_kb(t, back_callback),
+        reply_markup=payment_kb(t, back_callback, allow_promo=plan != TRAFFIC_TOPUP),
     )
 
 
@@ -340,7 +456,9 @@ async def stars_pre_checkout(query: types.PreCheckoutQuery, t, lang, db_user):
         and int(query.total_amount) == expected
     )
     if valid and plan == TRAFFIC_TOPUP:
-        valid = await can_buy_traffic(db_user.id)
+        # A Stars top-up belongs to the VPN saved on this invoice, which may
+        # be an extra subscription. Never silently check the primary instead.
+        valid = await can_buy_traffic(db_user.id, order.subscription_id)
     await query.answer(ok=valid, error_message=None if valid else _payment_error(lang))
 
 
@@ -402,7 +520,8 @@ async def stars_successful_payment(message: types.Message, t, lang, db_user):
     await db_repo.update_order(order.id, status="paid")
     await message.answer(
         t("traffic_payment_success" if plan == TRAFFIC_TOPUP else "payment_success",
-          link=h(link), expire_date=expire_at.strftime("%d.%m.%Y"))
+          link=h(link), expire_date=expire_at.strftime("%d.%m.%Y")),
+        reply_markup=customer_cabinet_kb(t),
     )
     await notify_admins(
         f"⭐ Stars-оплата заказа #{order.id} ({plan}) — "
