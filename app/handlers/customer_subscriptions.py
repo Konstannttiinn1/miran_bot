@@ -17,9 +17,9 @@ from app.keyboards.builders import back_kb, payment_kb, plans_kb, raw_btn
 from app.middlewares.i18n import I18nMiddleware
 from app.repositories import customer_subscriptions_repo as customer_repo, db_repo
 from app.services.subscription import can_buy_traffic
-from app.services.vpn_provider import subscription_link, reset_subscription_link
+from app.services.vpn_provider import get_vpn_provider, subscription_link, reset_subscription_link
 from app.utils.menu import send_with_logo
-from app.utils.tariffs import TRAFFIC_TOPUP, get_plan_intro, get_price_display
+from app.utils.tariffs import PLANS, TRAFFIC_TOPUP, get_plan_intro, get_price_display
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -74,6 +74,33 @@ async def _get_owned(callback, t, db_user, sub_id: int):
     return sub
 
 
+async def _live_usage(t, sub) -> str:
+    """Optional read-only panel statistics; never patches limits or expiry."""
+    if sub.status != "active":
+        return ""
+    try:
+        data = await asyncio.wait_for(
+            get_vpn_provider().get_client(sub.xui_email), timeout=6,
+        )
+        if not isinstance(data, dict):
+            return ""
+        usage = data.get("userTraffic") or {}
+        used = usage.get("usedTrafficBytes") if isinstance(usage, dict) else None
+        limit = data.get("trafficLimitBytes")
+        device_limit = data.get("hwidDeviceLimit")
+        if used is None or limit is None:
+            return ""
+        return "\n\n" + t(
+            "customer_live_usage",
+            used=f"{max(0, float(used)) / 1024 ** 3:.2f}",
+            limit=f"{max(0, float(limit)) / 1024 ** 3:.2f}",
+            devices=device_limit if device_limit is not None else "—",
+        )
+    except Exception:
+        log.info("Live customer traffic stats unavailable for sub=%s", sub.id)
+        return ""
+
+
 async def show_card(callback, t, db_user, sub_id: int) -> None:
     sub = await _get_owned(callback, t, db_user, sub_id)
     if sub is None:
@@ -87,11 +114,15 @@ async def show_card(callback, t, db_user, sub_id: int) -> None:
         rows.append([raw_btn(t("customer_renew"), f"cust:renew:{sub.id}")])
     rows.append([raw_btn(t("customer_rename"), f"cust:rename:{sub.id}")])
     rows.append([raw_btn(t("btn_back"), "cust:subs")])
+    tariff = PLANS.get(sub.plan, {})
     description = t(
         "customer_card", name=h(_label(t, sub)), status=_status(t, sub),
         expire=sub.expire_at.strftime("%d.%m.%Y") if sub.status != "pending" else "—",
         traffic=sub.traffic_limit_gb, id=sub.id,
     )
+    if tariff.get("devices"):
+        description += "\n" + t("subscription_devices", devices=tariff["devices"])
+    description += await _live_usage(t, sub)
     await send_with_logo(
         callback, description,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
