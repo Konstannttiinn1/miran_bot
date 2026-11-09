@@ -118,7 +118,8 @@ async def activate_trial(callback: types.CallbackQuery, t, db_user, state: FSMCo
         return
     # A new user may claim a trial once. The repository's atomic claim
     # remains authoritative if another request races this check.
-    if (await db_repo.get_subscription(db_user.id) is not None
+    if (db_user.role == "dealer"
+            or await db_repo.get_subscription(db_user.id) is not None
             or not await db_repo.can_claim_test(db_user.id)):
         await callback.answer(t("test_unavailable"), show_alert=True)
         return
