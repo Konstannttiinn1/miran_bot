@@ -192,6 +192,18 @@ async def buy(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext
     await add(callback, t, lang, db_user, state)
 
 
+@router.callback_query(F.data == "menu:trial")
+async def menu_trial(callback: types.CallbackQuery, t, db_user, state: FSMContext):
+    """Free trial is available only to first-time personal customers."""
+    if db_user.role == "dealer" or db_user.is_blocked:
+        await callback.answer(t("test_unavailable"), show_alert=True)
+        return
+    # A main-menu action must not inherit stale checkout FSM state.
+    await state.clear()
+    from app.handlers.client import activate_trial
+    await activate_trial(callback, t, db_user, state)
+
+
 @router.callback_query(F.data == "menu:get_link")
 async def get_link(callback: types.CallbackQuery, t, lang, db_user):
     sub = await db_repo.get_subscription(db_user.id)
