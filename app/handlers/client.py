@@ -8,7 +8,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPri
 from app.bot import bot
 from app.config import settings
 from app.handlers.states import Purchase
-from app.keyboards.builders import back_kb, dealer_confirm_kb, devices_kb, payment_kb, plans_kb
+from app.keyboards.builders import back_kb, customer_cabinet_kb, dealer_confirm_kb, devices_kb, payment_kb, plans_kb
 from app.middlewares.i18n import I18nMiddleware, get_text
 from app.repositories import db_repo, dealer_tools_repo, customer_subscriptions_repo
 from app.repositories.customer_subscriptions_repo import SubscriptionLimitReached
@@ -508,7 +508,8 @@ async def stars_successful_payment(message: types.Message, t, lang, db_user):
     await db_repo.update_order(order.id, status="paid")
     await message.answer(
         t("traffic_payment_success" if plan == TRAFFIC_TOPUP else "payment_success",
-          link=h(link), expire_date=expire_at.strftime("%d.%m.%Y"))
+          link=h(link), expire_date=expire_at.strftime("%d.%m.%Y")),
+        reply_markup=customer_cabinet_kb(t),
     )
     await notify_admins(
         f"⭐ Stars-оплата заказа #{order.id} ({plan}) — "
