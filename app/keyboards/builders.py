@@ -59,8 +59,8 @@ def language_kb(t=None, with_back: bool = False) -> InlineKeyboardMarkup:
 def main_menu_kb(t, *, with_trial: bool = False) -> InlineKeyboardMarkup:
     """Free trial is offered only when the caller confirms eligibility."""
     rows = [
-        [_btn(t, "btn_my_vpn", "menu:my_vpn")],
         [_btn(t, "btn_buy", "menu:buy")],
+        [_btn(t, "btn_my_vpn", "menu:my_vpn")],
     ]
     if with_trial:
         rows.append([_btn(t, "btn_trial_period", "menu:trial")])
