@@ -6,9 +6,10 @@ from collections import defaultdict
 from html import escape as h
 
 from aiogram import F, Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import settings
 from app.database.models import utcnow
@@ -28,6 +29,11 @@ router.message.middleware(I18nMiddleware())
 _reset_locks = defaultdict(asyncio.Lock)
 _reset_recent: dict[tuple[int, int], float] = {}
 
+# Display one consistent icon for every customer VPN, regardless of
+# active/expired/pending state. Telegram renders status on the detail card.
+CUSTOMER_VPN_ICON_ID = "5361587754985628543"
+CUSTOMER_VPN_FALLBACK = "🔖"
+
 
 class RenameSubscription(StatesGroup):
     name = State()
@@ -45,28 +51,44 @@ def _status(t, sub) -> str:
     return t("customer_active") if sub.expire_at > utcnow() else t("customer_expired")
 
 
+def _cabinet_markup(t, subs, *, with_custom_icon: bool) -> InlineKeyboardMarkup:
+    rows = []
+    for sub in subs:
+        label = _label(t, sub)[:34]
+        # icon_custom_emoji_id is independent of USE_CUSTOM_EMOJI: other
+        # buttons may keep their normal Unicode symbols as requested.
+        rows.append([InlineKeyboardButton(
+            text=label if with_custom_icon else f"{CUSTOMER_VPN_FALLBACK} {label}",
+            callback_data=f"cust:card:{sub.id}",
+            **({"icon_custom_emoji_id": CUSTOMER_VPN_ICON_ID} if with_custom_icon else {}),
+        )])
+    add_label = "customer_add" if subs else "btn_buy"
+    rows.append([raw_btn(t(add_label), "cust:add")])
+    rows.append([raw_btn(t("btn_back"), "back:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 async def show_cabinet(callback, t, db_user) -> None:
     subs = await customer_repo.list_subscriptions(db_user.id)
     total_extra = sum(not sub.is_primary for sub in subs)
     max_extra = max(0, min(settings.max_additional_subscriptions, 100))
     lines = [t("customer_cabinet_intro", count=len(subs), extra=total_extra, limit=max_extra)]
-    rows = []
-    for sub in subs:
-        tag = "🟡" if sub.status == "pending" else (
-            "🟢" if sub.expire_at > utcnow() else "🔴"
-        )
-        label = _label(t, sub)[:34]
-        rows.append([raw_btn(f"{tag} {label}", f"cust:card:{sub.id}")])
     if not subs:
         lines.append(t("customer_cabinet_empty"))
-    # Do not say "another" when there is not yet a first VPN.
-    add_label = "customer_add" if subs else "btn_buy"
-    rows.append([raw_btn(t(add_label), "cust:add")])
-    rows.append([raw_btn(t("btn_back"), "back:main")])
-    await send_with_logo(
-        callback, "\n\n".join(lines),
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-    )
+    caption = "\n\n".join(lines)
+    try:
+        await send_with_logo(
+            callback, caption, reply_markup=_cabinet_markup(t, subs, with_custom_icon=True),
+        )
+    except TelegramBadRequest as exc:
+        # Bot API restricts custom icons to eligible bots. A plain bookmark
+        # must keep the subscription cabinet usable if icon rendering fails.
+        if "icon" not in str(exc).lower() and "emoji" not in str(exc).lower():
+            raise
+        log.warning("Customer VPN custom button icon was rejected by Telegram")
+        await send_with_logo(
+            callback, caption, reply_markup=_cabinet_markup(t, subs, with_custom_icon=False),
+        )
 
 
 async def _get_owned(callback, t, db_user, sub_id: int):
