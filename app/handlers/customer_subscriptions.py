@@ -123,6 +123,7 @@ async def show_card(callback, t, db_user, sub_id: int) -> None:
     if tariff.get("devices"):
         description += "\n" + t("subscription_devices", devices=tariff["devices"])
     description += await _live_usage(t, sub)
+    await callback.answer()
     await send_with_logo(
         callback, description,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
@@ -138,7 +139,6 @@ async def cabinet(callback: types.CallbackQuery, t, db_user, state: FSMContext):
 
 @router.callback_query(F.data.startswith("cust:card:"))
 async def card(callback: types.CallbackQuery, t, db_user):
-    await callback.answer()
     await show_card(callback, t, db_user, int(callback.data.rsplit(":", 1)[-1]))
 
 
