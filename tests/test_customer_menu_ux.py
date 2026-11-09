@@ -19,9 +19,9 @@ def test_main_menu_has_buy_instead_of_promo_and_checkout_keeps_promo(lang):
     t = lambda key, **kw: get_text(lang, key, **kw)
     menu = builders.main_menu_kb(t)
     actions = [button.callback_data for row in menu.inline_keyboard for button in row]
-    assert actions == ["menu:my_vpn", "menu:buy", "menu:support", "menu:lang"]
+    assert actions == ["menu:buy", "menu:my_vpn", "menu:support", "menu:lang"]
     assert "menu:promo" not in actions
-    assert menu.inline_keyboard[1][0].text == get_text(lang, "btn_buy")
+    assert menu.inline_keyboard[0][0].text == get_text(lang, "btn_buy")
 
     payment = builders.payment_kb(t)
     payment_actions = [b.callback_data for row in payment.inline_keyboard for b in row]
@@ -156,11 +156,11 @@ async def test_main_trial_only_for_first_time_eligible_customers(
     assert ("menu:trial" in buttons) is expected
     if expected:
         assert buttons == [
-            "menu:my_vpn", "menu:buy", "menu:trial", "menu:support", "menu:lang"
+            "menu:buy", "menu:my_vpn", "menu:trial", "menu:support", "menu:lang"
         ]
         assert db_repo.can_claim_test.await_count == 1
     else:
-        assert buttons == ["menu:my_vpn", "menu:buy", "menu:support", "menu:lang"]
+        assert buttons == ["menu:buy", "menu:my_vpn", "menu:support", "menu:lang"]
 
 
 @pytest.mark.asyncio
