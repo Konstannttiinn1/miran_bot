@@ -113,8 +113,9 @@ async def delete_user_full(telegram_id: int) -> None:
         )
         for redemption in redemptions.scalars().all():
             await session.delete(redemption)
-        for model, column in ((Subscription, Subscription.user_id),
-                              (Order, Order.user_id),
+        # Orders now reference individual subscription IDs: delete them first.
+        for model, column in ((Order, Order.user_id),
+                              (Subscription, Subscription.user_id),
                               (DealerSubscription, DealerSubscription.dealer_id),
                               (DealerTest, DealerTest.dealer_id),
                               (PromoCode, PromoCode.dealer_id),
