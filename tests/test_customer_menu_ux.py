@@ -227,3 +227,27 @@ async def test_cabinet_custom_icon_bad_request_falls_back_to_plain(monkeypatch):
     )
     assert send.await_count == 2
     assert send.await_args.kwargs["reply_markup"].inline_keyboard[0][0].icon_custom_emoji_id is None
+
+
+def test_orion_support_contact_default():
+    from app.config import Settings
+
+    assert Settings.model_fields["support_username"].default == "@Orion_Ehsan"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lang", ["ru", "fa", "en"])
+async def test_support_button_uses_ehsan_contact(monkeypatch, lang):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "support_username", "@Orion_Ehsan")
+    send = AsyncMock()
+    monkeypatch.setattr(start, "send_with_logo", send)
+    callback = SimpleNamespace(answer=AsyncMock())
+    t = lambda key, **kw: get_text(lang, key, **kw)
+
+    await start.support(callback, t, lang, SimpleNamespace(id=42))
+
+    callback.answer.assert_awaited_once()
+    assert "@Orion_Ehsan" in send.await_args.args[1]
+    assert "@L_Konstantinn" not in send.await_args.args[1]
