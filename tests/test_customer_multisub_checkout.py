@@ -187,7 +187,13 @@ async def test_admin_block_targets_all_active_personal_vpns(database, monkeypatc
 
 @pytest.mark.asyncio
 async def test_remnawave_revoke_does_not_send_expiry_or_traffic_changes(monkeypatch):
-    from app.services.remnawave_api import RemnawaveClient
+    from app.services.remnawave_api import RemnawaveClient, settings
+
+    # No production Remnawave configuration or network activity is required.
+    monkeypatch.setattr(settings, "remnawave_api_url", "https://panel.example.invalid")
+    monkeypatch.setattr(settings, "remnawave_api_token", "FAKE_TEST_TOKEN")
+    monkeypatch.setattr(settings, "remnawave_subscription_url", "https://sub.example.invalid")
+    monkeypatch.setattr(settings, "remnawave_squad_uuid", "00000000-0000-0000-0000-000000000000")
 
     api = RemnawaveClient()
     get_client = AsyncMock(return_value={
