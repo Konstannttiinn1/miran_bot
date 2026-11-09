@@ -56,13 +56,19 @@ def language_kb(t=None, with_back: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def main_menu_kb(t) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+def main_menu_kb(t, *, with_trial: bool = False) -> InlineKeyboardMarkup:
+    """Free trial is offered only when the caller confirms eligibility."""
+    rows = [
         [_btn(t, "btn_my_vpn", "menu:my_vpn")],
         [_btn(t, "btn_buy", "menu:buy")],
+    ]
+    if with_trial:
+        rows.append([_btn(t, "btn_trial_period", "menu:trial")])
+    rows.extend([
         [_btn(t, "btn_support", "menu:support")],
         [_btn(t, "btn_lang", "menu:lang")],
     ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def customer_cabinet_kb(t) -> InlineKeyboardMarkup:
