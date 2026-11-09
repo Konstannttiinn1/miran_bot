@@ -183,3 +183,31 @@ async def test_admin_block_targets_all_active_personal_vpns(database, monkeypatc
     assert called == {primary.xui_email, extra.xui_email}
     assert all(c.kwargs["enabled"] is False for c in provider.set_enabled.await_args_list)
     assert (await db_repo.get_user_by_id(user.id)).is_blocked
+
+
+@pytest.mark.asyncio
+async def test_remnawave_revoke_does_not_send_expiry_or_traffic_changes(monkeypatch):
+    from app.services.remnawave_api import RemnawaveClient
+
+    api = RemnawaveClient()
+    get_client = AsyncMock(return_value={
+        "id": 50021, "shortUuid": "old-link",
+        "expireAt": "2026-12-01T00:00:00Z",
+        "trafficLimitBytes": 100 * 1024 ** 3,
+    })
+    request = AsyncMock(return_value={"shortUuid": "new-link"})
+    mapping = AsyncMock()
+    monkeypatch.setattr(api, "get_client", get_client)
+    monkeypatch.setattr(api, "_request", request)
+    monkeypatch.setattr(api, "_save_mapping", mapping)
+
+    result = await api.reset_subscription_link("cs-1-secondary")
+    get_client.assert_awaited_once_with("cs-1-secondary")
+    request.assert_awaited_once_with(
+        "POST", "/api/users/50021/actions/revoke",
+        json={"revokeOnlyPasswords": False},
+    )
+    mapping.assert_awaited_once_with(
+        "cs-1-secondary", {"shortUuid": "new-link"},
+    )
+    assert result.endswith("/new-link")
