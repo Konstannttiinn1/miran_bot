@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from app.config import settings
 from app.database.models import utcnow
-from app.repositories import db_repo
+from app.repositories import db_repo, customer_subscriptions_repo
 from app.services.vpn_provider import (
     get_vpn_provider,
     reset_subscription_link,
@@ -86,21 +86,63 @@ async def _grant_vpn(
 
 
 async def grant_paid_order(user_id: int, telegram_id: int, order) -> tuple[str, object]:
-    """Use the fixed bonus attached to the paid order, never a new promo lookup."""
+    """Apply only the selected order's VPN target and snapshotted promo bonus."""
     bonus_days = await db_repo.get_order_promo_bonus_days(order.id)
-    return await grant_vpn(user_id, telegram_id, order.plan, bonus_days=bonus_days)
+    sub_id = order.subscription_id
+    if order.plan == TRAFFIC_TOPUP:
+        return await grant_traffic_topup(user_id, sub_id)
+    if sub_id is not None:
+        sub = await customer_subscriptions_repo.get_subscription(user_id, sub_id)
+        if sub is None or sub.status not in {"active", "pending"}:
+            raise ValueError("Order subscription is missing or belongs to another account")
+        tariff = get_tariff(order.plan)
+        if not tariff.get("monthly"):
+            raise ValueError("Targeted purchases require a monthly subscription")
+        provider = get_vpn_provider()
+        expire_at = await grant_monthly(
+            provider, sub.xui_email, int(tariff["days"]),
+            limit_ip=int(tariff["devices"]), bonus_days=bonus_days,
+        )
+        link = await subscription_link(sub.xui_email)
+        updated = await customer_subscriptions_repo.update_subscription(
+            user_id, sub_id, expire_at=expire_at, plan=order.plan,
+            status="active", notified_3d=False, notified_1d=False,
+            **({"traffic_limit_gb": int(tariff["traffic_gb"])} if sub.status == "pending" else {}),
+        )
+        if not updated:
+            raise RuntimeError("Panel confirmed a purchase but the target could not be saved")
+        return link, expire_at
+    link, expiry = await grant_vpn(user_id, telegram_id, order.plan, bonus_days=bonus_days)
+    if order.plan != "test":
+        primary = await db_repo.get_subscription(user_id)
+        if primary is not None:
+            await customer_subscriptions_repo.update_subscription(
+                user_id, primary.id, plan=order.plan,
+            )
+    return link, expiry
 
 
-async def can_buy_traffic(user_id: int) -> bool:
+async def can_buy_traffic(user_id: int, subscription_id: int | None = None) -> bool:
     user = await db_repo.get_user_by_id(user_id)
-    sub = await db_repo.get_subscription(user_id)
-    return bool(user and not user.is_blocked and sub and sub.expire_at > utcnow())
+    sub = (
+        await customer_subscriptions_repo.get_subscription(user_id, subscription_id)
+        if subscription_id is not None else await db_repo.get_subscription(user_id)
+    )
+    return bool(
+        user and not user.is_blocked and sub and sub.status == "active"
+        and sub.expire_at > utcnow()
+    )
 
 
-async def grant_traffic_topup(user_id: int) -> tuple[str, object]:
-    if not await can_buy_traffic(user_id):
+async def grant_traffic_topup(
+    user_id: int, subscription_id: int | None = None,
+) -> tuple[str, object]:
+    if not await can_buy_traffic(user_id, subscription_id):
         raise ValueError("Traffic top-up requires an active subscription")
-    sub = await db_repo.get_subscription(user_id)
+    sub = (
+        await customer_subscriptions_repo.get_subscription(user_id, subscription_id)
+        if subscription_id is not None else await db_repo.get_subscription(user_id)
+    )
     provider = get_vpn_provider()
     current = await provider.get_client(sub.xui_email)
     if current is None or current.get("status") in {"DISABLED", "EXPIRED"}:
@@ -115,9 +157,13 @@ async def grant_traffic_topup(user_id: int) -> tuple[str, object]:
     extra = int(get_tariff(TRAFFIC_TOPUP)["traffic_gb"])
     new_limit = await provider.add_traffic(sub.xui_email, extra)
     if not await is_monthly(sub.xui_email):
-        await db_repo.update_subscription(
-            user_id, traffic_limit_gb=new_limit if isinstance(new_limit, int) else sub.traffic_limit_gb + extra,
-        )
+        fields = {
+            "traffic_limit_gb": new_limit if isinstance(new_limit, int) else sub.traffic_limit_gb + extra,
+        }
+        if subscription_id is None:
+            await db_repo.update_subscription(user_id, **fields)
+        else:
+            await customer_subscriptions_repo.update_subscription(user_id, subscription_id, **fields)
     return link, sub.expire_at
 
 
