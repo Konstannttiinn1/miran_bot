@@ -109,9 +109,12 @@ def payment_kb(
 ) -> InlineKeyboardMarkup:
     rows = [
         [_btn(t, "pay_stars", "pay:stars")],
-        [_btn(t, "pay_heleket", "pay:heleket")],
-        [_btn(t, "pay_dealer", "pay:dealer")],
     ]
+    # Hide a provider that has been administratively disabled. Its existing
+    # invoices remain in the database for reconciliation once access returns.
+    if settings.heleket_enabled:
+        rows.append([_btn(t, "pay_heleket", "pay:heleket")])
+    rows.append([_btn(t, "pay_dealer", "pay:dealer")])
     if allow_promo:
         rows.append([_btn(t, "customer_apply_promo", "checkout:promo")])
     rows.append([_btn(t, "btn_back", back_callback)])
