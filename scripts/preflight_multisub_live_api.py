@@ -66,6 +66,7 @@ async def live_worker():
     test_email = None
     stage = "preparation"
     cleanup_ok = False
+    cleanup_armed = False
     success = False
 
     try:
@@ -98,6 +99,9 @@ async def live_worker():
         )
         if existing:
             raise RuntimeError("Synthetic username already exists in panel")
+        # Only after the pre-create GET confirms absence may the test delete
+        # this username. Never remove an account found before our POST.
+        cleanup_armed = True
         print("  OK: distinct additional slot reserved, no existing panel username", flush=True)
 
         stage = "creating the disposable VPN in live Remnawave"
@@ -175,7 +179,7 @@ async def live_worker():
         # Don't include API response bodies, URLs, credentials, or client data.
         print(f"  FAILED at '{stage}' ({type(exc).__name__})", flush=True)
     finally:
-        if test_email:
+        if test_email and cleanup_armed:
             print("=== Removing the synthetic client from live Remnawave ===", flush=True)
             try:
                 user = await provider._request(
@@ -201,6 +205,9 @@ async def live_worker():
                     "in Remnawave panel",
                     flush=True,
                 )
+        elif not cleanup_armed:
+            # Nothing was ever authorized to be created/deleted in the panel.
+            cleanup_ok = True
 
     if not cleanup_ok:
         raise RuntimeError("Cleanup could not be confirmed; manual action required")
