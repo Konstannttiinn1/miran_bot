@@ -220,8 +220,8 @@ async def test_payment_claim_is_atomic_with_two_workers(database):
     assert results.count(True) == 1
 
 
-@pytest.mark.parametrize("lang,label", [("ru", "Купить VPN"), ("en", "Buy VPN"), ("fa", "خرید VPN")])
-def test_main_button_is_renamed_and_topup_is_separate_from_duration_menu(lang, label):
+@pytest.mark.parametrize("lang,label", [("ru", "Мои подписки"), ("en", "My subscriptions"), ("fa", "اشتراک‌های من")])
+def test_main_button_opens_subscription_cabinet_and_topup_is_separate_from_duration_menu(lang, label):
     t = lambda key, **kw: get_text(lang, key, **kw)
     main = builders.main_menu_kb(t)
     assert label in main.inline_keyboard[0][0].text
