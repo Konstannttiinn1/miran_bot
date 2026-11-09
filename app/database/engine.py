@@ -14,6 +14,56 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Existing single-subscription installations need a safe, additive migration.
+        # We do not modify existing rows' xui_email, expiration or quota.
+        sub_cols = await conn.run_sync(
+            lambda sync: {column["name"] for column in inspect(sync).get_columns("subscriptions")}
+        )
+        new_sub_cols = {
+            "is_primary": "BOOLEAN NOT NULL DEFAULT TRUE",
+            "label": "VARCHAR(64) NOT NULL DEFAULT ''",
+            "plan": "VARCHAR(64) NOT NULL DEFAULT ''",
+            "status": "VARCHAR(24) NOT NULL DEFAULT 'active'",
+        }
+        for column, definition in new_sub_cols.items():
+            if column not in sub_cols:
+                await conn.execute(text(f"ALTER TABLE subscriptions ADD COLUMN {column} {definition}"))
+
+        order_cols = await conn.run_sync(
+            lambda sync: {column["name"] for column in inspect(sync).get_columns("orders")}
+        )
+        if "subscription_id" not in order_cols:
+            await conn.execute(text(
+                "ALTER TABLE orders ADD COLUMN subscription_id INTEGER REFERENCES subscriptions(id)"
+            ))
+
+        uniques = await conn.run_sync(
+            lambda sync: inspect(sync).get_unique_constraints("subscriptions")
+        )
+        for unique in uniques:
+            if sorted(unique.get("column_names") or []) != ["user_id"]:
+                continue
+            if conn.dialect.name == "postgresql":
+                name = conn.dialect.identifier_preparer.quote(unique["name"])
+                await conn.execute(text(f"ALTER TABLE subscriptions DROP CONSTRAINT {name}"))
+            else:
+                raise RuntimeError(
+                    "Existing SQLite subscriptions.user_id UNIQUE requires an offline "
+                    "table-rebuild migration. Refusing to change a live database."
+                )
+        # A partial unique index preserves one primary subscription per customer.
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_subscriptions_user_primary "
+            "ON subscriptions(user_id) WHERE is_primary = TRUE"
+        ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_subscriptions_xui_email "
+            "ON subscriptions(xui_email)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_orders_subscription_id "
+            "ON orders(subscription_id)"
+        ))
         # create_all() does not upgrade existing promo tables.
         promo_cols = await conn.run_sync(
             lambda sync: {column["name"] for column in inspect(sync).get_columns("promo_codes")}
