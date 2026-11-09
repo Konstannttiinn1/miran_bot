@@ -260,6 +260,11 @@ async def reject_dealer_order(order_id: int, dealer_id: int) -> Order | None:
             order.status = "failed"
             order.dealer_id = dealer_id
             await release_failed_order_promo(session, order_id)
+            # Rejected bank receipts never reached the panel; free the reserved slot.
+            if order.subscription_id is not None:
+                slot = await session.get(Subscription, order.subscription_id)
+                if slot is not None and slot.status == "pending" and not slot.is_primary:
+                    slot.status = "cancelled"
             session.add(
                 DealerLog(
                     dealer_id=dealer_id,
