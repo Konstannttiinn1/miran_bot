@@ -10,7 +10,7 @@ from app.config import settings
 from app.handlers.states import Purchase
 from app.keyboards.builders import back_kb, dealer_confirm_kb, devices_kb, payment_kb, plans_kb
 from app.middlewares.i18n import I18nMiddleware, get_text
-from app.repositories import db_repo, dealer_tools_repo
+from app.repositories import db_repo, dealer_tools_repo, customer_subscriptions_repo
 from app.repositories.customer_subscriptions_repo import SubscriptionLimitReached
 from app.services import heleket
 from app.services.vpn_provider import provider_name
@@ -152,7 +152,8 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
         notice = get_promo_notice(t, promo)
         await send_with_logo(
             callback,
-            t("select_devices", months=PLANS[plan]["months"])
+            (await _target_caption(t, db_user.id, active_data)) + "\n\n"
+            + t("select_devices", months=PLANS[plan]["months"])
             + ("\n\n" + notice if notice else ""),
             reply_markup=devices_kb(
                 plan, t, discount_percent=promo.discount_percent if promo else 0,
@@ -168,6 +169,23 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
     await send_with_logo(
         callback, text, reply_markup=payment_kb(t, allow_promo=False),
     )
+
+
+async def _target_caption(t, user_id: int, flow: dict) -> str:
+    """Make the target VPN explicit before invoice issuance."""
+    mode = flow.get("purchase_mode", "primary")
+    if mode == "new":
+        return t("customer_checkout_new")
+    if mode == "renew":
+        sub_id = flow.get("subscription_id")
+        sub = await customer_subscriptions_repo.get_subscription(user_id, sub_id) if sub_id else None
+        if sub is None:
+            return t("customer_unavailable")
+        name = sub.label or (
+            t("customer_primary") if sub.is_primary else t("customer_unnamed", id=sub.id)
+        )
+        return t("customer_selected", name=h(name))
+    return t("customer_checkout_primary")
 
 
 async def _checkout_promo(user_id: int, data: dict):
@@ -189,7 +207,8 @@ async def _show_checkout(target, t, lang, db_user, state: FSMContext) -> None:
     price = get_promo_price_display(plan, lang, percent, markup=True)
     notice = get_promo_notice(t, promo)
     back_callback = f"plan:{get_period_plan(plan)}"
-    text = ((notice + "\n\n") if notice else "") + t(
+    target_text = await _target_caption(t, db_user.id, data)
+    text = target_text + "\n\n" + ((notice + "\n\n") if notice else "") + t(
         "purchase_summary", product=_product_label(plan, lang), price=price,
     ) + "\n\n" + t("select_payment")
     await send_with_logo(
@@ -255,7 +274,7 @@ async def back_to_plans(callback: types.CallbackQuery, t, lang, db_user, state: 
     promo = await db_repo.get_active_purchase_promo(db_user.id)
     await send_with_logo(
         callback,
-        get_plan_intro(t, lang, promo),
+        (await _target_caption(t, db_user.id, data)) + "\n\n" + get_plan_intro(t, lang, promo),
         reply_markup=plans_kb(
             t, with_test=with_test, lang=lang,
             discount_percent=promo.discount_percent if promo else 0,
