@@ -59,7 +59,9 @@ async def show_cabinet(callback, t, db_user) -> None:
         rows.append([raw_btn(f"{tag} {label}", f"cust:card:{sub.id}")])
     if not subs:
         lines.append(t("customer_cabinet_empty"))
-    rows.append([raw_btn(t("customer_add"), "cust:add")])
+    # Do not say "another" when there is not yet a first VPN.
+    add_label = "customer_add" if subs else "btn_buy"
+    rows.append([raw_btn(t(add_label), "cust:add")])
     rows.append([raw_btn(t("btn_back"), "back:main")])
     await send_with_logo(
         callback, "\n\n".join(lines),
