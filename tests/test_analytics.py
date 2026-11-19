@@ -3,6 +3,8 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage, StorageKey
 from sqlalchemy import func, select
 from sqlalchemy import event
 from sqlalchemy.dialects import postgresql
@@ -266,6 +268,10 @@ async def test_first_start_records_campaign_before_language_selection(database, 
     user = await db_repo.get_or_create_user(83007)
     monkeypatch.setattr(start, "send_with_logo", AsyncMock())
     message = SimpleNamespace(text=f"/start {campaign.code}", from_user=SimpleNamespace(id=user.telegram_id))
-    await start.cmd_start(message, lambda key, **kw: get_text("en", key, **kw), "en", user)
+    state = FSMContext(
+        MemoryStorage(),
+        StorageKey(bot_id=123, chat_id=user.telegram_id, user_id=user.telegram_id),
+    )
+    await start.cmd_start(message, lambda key, **kw: get_text("en", key, **kw), "en", user, state)
     async with database() as session:
         assert (await session.get(models.CampaignAttribution, user.telegram_id)).campaign_id == campaign.id

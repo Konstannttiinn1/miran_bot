@@ -27,3 +27,9 @@ class DealerManagedSubscription(StatesGroup):
     """Покупка, именование и поиск подписок, которыми управляет дилер."""
     waiting_name = State()
     searching = State()
+
+
+class Broadcast(StatesGroup):
+    choosing = State()
+    composing = State()
+    preview = State()
