@@ -160,6 +160,7 @@ def dealer_menu_kb(t) -> InlineKeyboardMarkup:
         [_btn(t, "dealer_btn_subscriptions", "dealer:subs")],
         [_btn(t, "btn_dealer_balance", "dealer:balance")],
         [_btn(t, "btn_dealer_history", "dealer:history")],
+        [_btn(t, "broadcast_menu", "bc:open")],
         [_btn(t, "btn_lang", "menu:lang")],
     ]
     analytics = analytics_button(t("btn_analytics"))
@@ -313,6 +314,7 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
         [raw_btn("👥 Пользователи", "admin:users")],
         [raw_btn("🤝 Дилеры", "admin:dealers")],
         [raw_btn("🎟️ Промокоды", "admin:promos")],
+        [raw_btn(get_text("ru", "broadcast_menu"), "bc:open")],
         [raw_btn("📊 Логи", "admin:logs")],
     ]
     analytics = analytics_button("📈 Аналитика")

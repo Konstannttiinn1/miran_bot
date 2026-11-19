@@ -229,5 +229,22 @@
   "customer_checkout_changed": "Invoice could not be created: the promo or subscription has changed, or your account limit was reached. Go back or try another code.",
   "customer_live_usage": "📊 Used: {used} / {limit} GB\n📱 Device limit: {devices}",
   "customer_checkout_new": "➕ <b>New independent subscription</b>\nYour existing VPNs will not change.",
-  "customer_checkout_primary": "📱 <b>Primary subscription</b>"
+  "customer_checkout_primary": "📱 <b>Primary subscription</b>",
+  "broadcast_menu": "📣 Broadcasts",
+  "broadcast_choose": "📣 <b>New broadcast</b>\n\nWho should receive your message?",
+  "broadcast_all": "All users",
+  "broadcast_active": "Active users",
+  "broadcast_inactive": "Inactive users",
+  "broadcast_compose": "Send text or one photo with a caption. The bot will show a preview first.",
+  "broadcast_invalid": "Send text or a single photo, not an album.",
+  "broadcast_preview": "👆 Preview above.\nAudience — {audience}\nRecipients — {count}\n\nSend this message?",
+  "broadcast_send": "✅ Send broadcast",
+  "broadcast_cancel": "Cancel",
+  "broadcast_canceled": "Broadcast canceled. No messages were sent.",
+  "broadcast_stale": "This draft is closed. Open Broadcasts to start again.",
+  "broadcast_denied": "Only the administrator and dealers can send broadcasts.",
+  "broadcast_empty": "There are no recipients in this audience.",
+  "broadcast_preview_failed": "The preview could not be sent. Please send your message again.",
+  "broadcast_started": "Broadcast started. The bot will report the result when it finishes.",
+  "broadcast_result": "📣 Broadcast complete.\nSent — {sent}\nFailed — {failed}\nNo longer in audience — {skipped}"
 }

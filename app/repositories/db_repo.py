@@ -771,6 +771,26 @@ async def count_users() -> int:
         return (await session.execute(select(func.count(User.id)))).scalar_one()
 
 
+async def list_broadcast_recipients(audience: str, *, now: datetime | None = None) -> list[int]:
+    """Eligible Telegram users, at most one row per account."""
+    query = select(User.telegram_id).where(User.is_blocked.is_(False))
+    if audience in {"active", "inactive"}:
+        has_active = (
+            select(Subscription.id)
+            .where(
+                Subscription.user_id == User.id,
+                Subscription.status == "active",
+                Subscription.expire_at > (now if now is not None else utcnow()),
+            )
+            .exists()
+        )
+        query = query.where(has_active if audience == "active" else ~has_active)
+    elif audience != "all":
+        raise ValueError(f"Unknown broadcast audience: {audience}")
+    async with async_session_factory() as session:
+        return list((await session.scalars(query.order_by(User.telegram_id))).all())
+
+
 async def list_users_page(page: int, per_page: int = 10) -> list[User]:
     async with async_session_factory() as session:
         result = await session.execute(
