@@ -61,10 +61,14 @@ async def open_broadcast(callback: types.CallbackQuery, state: FSMContext, t, db
     if not _allowed(db_user):
         return await _notice(callback, t, "broadcast_denied")
     async with _lock_for(state):
-        nonce = token_hex(8)
-        rows = [[raw_btn(t(key), f"bc:aud:{nonce}:{audience}")] for audience, key in _AUDIENCES.items()]
-        rows.extend(_controls(t, nonce).inline_keyboard)
         await callback.answer()
+        counts = await db_repo.count_broadcast_audiences()
+        nonce = token_hex(8)
+        rows = [
+            [raw_btn(f"{t(key)} · {counts[audience]}", f"bc:aud:{nonce}:{audience}")]
+            for audience, key in _AUDIENCES.items()
+        ]
+        rows.extend(_controls(t, nonce).inline_keyboard)
         await callback.message.answer(
             t("broadcast_choose"), reply_markup=types.InlineKeyboardMarkup(inline_keyboard=rows)
         )

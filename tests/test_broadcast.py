@@ -20,6 +20,7 @@ from app.utils import notifications
 @pytest.mark.asyncio
 async def test_audiences_classify_users_once_by_any_active_personal_subscription(database):
     now = datetime(2026, 11, 19, 12)
+    assert await db_repo.count_broadcast_audiences(now=now) == {"all": 0, "active": 0, "inactive": 0}
     users = {id_: await db_repo.get_or_create_user(id_) for id_ in range(9101, 9108)}
     await db_repo.set_user_blocked(9107, True)
     async with database() as session:
@@ -44,6 +45,7 @@ async def test_audiences_classify_users_once_by_any_active_personal_subscription
     assert await db_repo.list_broadcast_recipients("all", now=now) == list(range(9101, 9107))
     assert await db_repo.list_broadcast_recipients("active", now=now) == [9101, 9105]
     assert await db_repo.list_broadcast_recipients("inactive", now=now) == [9102, 9103, 9104, 9106]
+    assert await db_repo.count_broadcast_audiences(now=now) == {"all": 6, "active": 2, "inactive": 4}
     with pytest.raises(ValueError):
         await db_repo.list_broadcast_recipients("invalid", now=now)
 
@@ -152,6 +154,9 @@ async def test_dealer_previews_and_confirms_once_for_the_whole_active_base(datab
     assert not bot_session.text_calls(9201)
 
     await feed(9201, callback="bc:open")
+    assert [row[0].text for row in last(9201).reply_markup.inline_keyboard[:3]] == [
+        "Все пользователи · 8", "Активные · 4", "Неактивные · 4",
+    ]
     await feed(9201, callback=button(last(9201).reply_markup, "bc:aud:").rsplit(":", 1)[0] + ":active")
     arrived, release = asyncio.Event(), asyncio.Event()
     bot_session.photo_gates[9201] = arrived, release
@@ -194,6 +199,9 @@ async def test_dealer_previews_and_confirms_once_for_the_whole_active_base(datab
     assert len(audit) == 1 and "9201" in audit[0].text and last(9201).text in audit[0].text
 
     await feed(9200, callback="bc:open")
+    assert [row[0].text for row in last(9200).reply_markup.inline_keyboard[:3]] == [
+        "Все пользователи · 7", "Активные · 4", "Неактивные · 3",
+    ]
     await feed(9200, callback=button(last(9200).reply_markup, "bc:aud:").rsplit(":", 1)[0] + ":inactive")
     await feed(9200, text="Текст <без HTML>", link_preview_options={"is_disabled": True})
     result = bot_session.text_calls(9200)

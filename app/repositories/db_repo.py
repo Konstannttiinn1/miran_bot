@@ -771,19 +771,36 @@ async def count_users() -> int:
         return (await session.execute(select(func.count(User.id)))).scalar_one()
 
 
+def _has_active_broadcast_subscription(now: datetime | None):
+    return (
+        select(Subscription.id)
+        .where(
+            Subscription.user_id == User.id,
+            Subscription.status == "active",
+            Subscription.expire_at > (now if now is not None else utcnow()),
+        )
+        .exists()
+    )
+
+
+async def count_broadcast_audiences(*, now: datetime | None = None) -> dict[str, int]:
+    """Count the same eligible users as the sender in a single database snapshot."""
+    active_sub = _has_active_broadcast_subscription(now)
+    query = (
+        select(func.count(), func.count(case((active_sub, 1))))
+        .select_from(User)
+        .where(User.is_blocked.is_(False))
+    )
+    async with async_session_factory() as session:
+        total, active = (await session.execute(query)).one()
+    return {"all": total, "active": active, "inactive": total - active}
+
+
 async def list_broadcast_recipients(audience: str, *, now: datetime | None = None) -> list[int]:
     """Eligible Telegram users, at most one row per account."""
     query = select(User.telegram_id).where(User.is_blocked.is_(False))
     if audience in {"active", "inactive"}:
-        has_active = (
-            select(Subscription.id)
-            .where(
-                Subscription.user_id == User.id,
-                Subscription.status == "active",
-                Subscription.expire_at > (now if now is not None else utcnow()),
-            )
-            .exists()
-        )
+        has_active = _has_active_broadcast_subscription(now)
         query = query.where(has_active if audience == "active" else ~has_active)
     elif audience != "all":
         raise ValueError(f"Unknown broadcast audience: {audience}")
