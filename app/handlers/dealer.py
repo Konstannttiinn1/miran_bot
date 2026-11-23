@@ -165,8 +165,13 @@ async def manual_receipt_prompt(callback: types.CallbackQuery, t, db_user, state
     if sub is None:
         await callback.answer(t("subscription_not_found"), show_alert=True)
         return
+    sale_id = await db_repo.latest_managed_sale_id(db_user.id, sub_id)
+    if sale_id is None:
+        await callback.answer(t("dcat_received_already"), show_alert=True)
+        return
     await state.set_state(DealerIncome.value)
-    await state.set_data({"manual_income_sub": sub_id, "manual_income_page": page})
+    await state.set_data({"manual_income_sub": sub_id, "manual_income_sale": sale_id,
+                          "manual_income_page": page})
     await callback.answer()
     await send_with_logo(
         callback, t("dcat_received_prompt"),
@@ -192,7 +197,9 @@ async def manual_receipt_save(message: types.Message, t, db_user, state: FSMCont
     if not 0 <= received <= 1_000_000_000_000:
         await message.answer(t("dcat_received_invalid"))
         return
-    ok = await db_repo.record_manual_dealer_receipt(db_user.id, sub_id, received)
+    ok = await db_repo.record_manual_dealer_receipt(
+        db_user.id, sub_id, received, sale_id=data.get("manual_income_sale"),
+    )
     await state.clear()
     await message.answer(t("dcat_received_done") if ok else t("dcat_received_already"))
 
