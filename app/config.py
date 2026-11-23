@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     dealer_test_daily_limit: int = 10
     dealer_test_timezone: str = "Asia/Tehran"
 
+    # New database-backed storefront. Leave OFF until all payment paths are verified.
+    dynamic_catalog_enabled: bool = False
+
     # Max extra personal subscriptions beyond the existing primary VPN.
     max_additional_subscriptions: int = 10
 
