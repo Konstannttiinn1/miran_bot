@@ -45,6 +45,7 @@ class Subscription(Base):
     is_primary: Mapped[bool] = mapped_column(Boolean, default=True)
     label: Mapped[str] = mapped_column(String(64), default="")
     plan: Mapped[str] = mapped_column(String(64), default="")
+    catalog_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # New secondary slots are reserved before invoice issuance, not activated.
     status: Mapped[str] = mapped_column(String(24), default="active")
     traffic_limit_gb: Mapped[int] = mapped_column(Integer, default=0)
