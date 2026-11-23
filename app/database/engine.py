@@ -27,6 +27,14 @@ async def init_db() -> None:
         managed_cols = await conn.run_sync(
             lambda sync: {column["name"] for column in inspect(sync).get_columns("dealer_subscriptions")}
         )
+        if "request_key" not in managed_cols:
+            await conn.execute(text(
+                "ALTER TABLE dealer_subscriptions ADD COLUMN request_key VARCHAR(64)"
+            ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_dealer_subscriptions_request_key "
+            "ON dealer_subscriptions(request_key)"
+        ))
         if "catalog_tariff_id" not in managed_cols:
             await conn.execute(text(
                 "ALTER TABLE dealer_subscriptions ADD COLUMN catalog_tariff_id INTEGER"
