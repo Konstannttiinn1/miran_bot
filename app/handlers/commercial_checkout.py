@@ -77,7 +77,7 @@ async def reopen_offers(callback: types.CallbackQuery, state: FSMContext, t, lan
     ) or data.get("purchase_mode") not in {"primary", "new", "renew"}):
         await callback.answer(t("cshop_unavailable"), show_alert=True)
         return
-    await state.update_data(plan=None, catalog_tariff_id=None, checkout_promo_code=None)
+    await state.update_data(plan=None, catalog_tariff_id=None, catalog_revision=None, checkout_promo_code=None)
     await state.set_state(Purchase.choosing_plan)
     await callback.answer()
     await show_offers(callback, t, lang, db_user.id)
@@ -106,7 +106,8 @@ async def choose_offer(callback: types.CallbackQuery, state: FSMContext, t, lang
     from app.handlers.client import _checkout_promo, _target_caption
     promo = await _checkout_promo(db_user.id, data)
     discount = promo.discount_percent if promo else 0
-    await state.update_data(plan=plan, catalog_tariff_id=item.id, order_id=None)
+    await state.update_data(plan=plan, catalog_tariff_id=item.id,
+                            catalog_revision=item.revision, order_id=None)
     await state.set_state(Purchase.choosing_payment)
     await callback.answer()
     label = catalog.title(item, lang)
