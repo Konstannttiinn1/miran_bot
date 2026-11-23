@@ -119,9 +119,9 @@ async def grant_monthly(
         raise RuntimeError("Monthly subscriptions require the configured Remnawave provider")
     if custom_terms:
         if not (1 <= days <= 365 and
-                1 <= limit_ip <= min(20, settings.catalog_max_devices) and
-                1 <= traffic_gb <= min(10000, settings.catalog_max_traffic_gb)):
-            raise ValueError("Custom monthly terms exceed the admin limits")
+                1 <= limit_ip <= 20 and
+                1 <= traffic_gb <= 10000):
+            raise ValueError("Custom monthly terms exceed absolute provider safety bounds")
     elif days not in (30, 60, 90):
         raise ValueError("Unsupported monthly duration")
     if not 0 <= bonus_days <= 365:
