@@ -275,3 +275,40 @@ async def import_legacy(actor_tg: int) -> int:
                         before=None, after={**new, "revision": 1},
                     ))
     return added
+
+
+def provision_plan(item: CommercialTariff) -> str:
+    """Only the existing supported products are available during phase 2."""
+    if not supports_issuance(item):
+        raise CatalogInvalid("Tariff does not match the supported Remnawave profile")
+    from app.services.catalog_pricing import plan_code
+    return plan_code(item.period_days, item.devices, item.traffic_gb)
+
+
+async def list_published(*, limit: int = 30) -> list[CommercialTariff]:
+    """Public product catalogue; only published, currently issuable offers."""
+    if not settings.dynamic_catalog_enabled:
+        return []
+    async with db_repo.async_session_factory() as session:
+        rows = await session.scalars(
+            select(CommercialTariff)
+            .where(CommercialTariff.status == "published")
+            .order_by(CommercialTariff.sort_order, CommercialTariff.id)
+            .limit(max(1, min(limit, 100)))
+        )
+        return [item for item in rows.all() if supports_issuance(item)]
+
+
+async def get_published(tariff_id: int) -> CommercialTariff | None:
+    if not settings.dynamic_catalog_enabled:
+        return None
+    async with db_repo.async_session_factory() as session:
+        item = await session.get(CommercialTariff, tariff_id)
+        if item is None or item.status != "published" or not supports_issuance(item):
+            return None
+        return item
+
+
+def title(item: CommercialTariff, lang: str) -> str:
+    return (item.name_ru if lang == "ru" else
+            item.name_en if lang == "en" else item.name_fa) or item.name_fa
