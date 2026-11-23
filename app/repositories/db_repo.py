@@ -380,6 +380,8 @@ async def reserve_dealer_subscription_purchase(
     dealer_id: int,
     plan: str,
     amount: float,
+    *, catalog_tariff_id: int | None = None,
+    catalog_expected_revision: int | None = None,
 ) -> tuple[str, DealerSubscription | None]:
     """Списывает дилерскую цену и создаёт pending-запись отдельной подписки."""
     if amount <= 0:
@@ -394,6 +396,35 @@ async def reserve_dealer_subscription_purchase(
             ).scalar_one_or_none()
             if dealer is None or dealer.role != "dealer":
                 return "not_dealer", None
+            catalog_snapshot = None
+            if catalog_tariff_id is not None:
+                if not settings.dynamic_catalog_enabled:
+                    return "invalid", None
+                from app.repositories.commercial_catalog_repo import (
+                    provision_plan, supports_issuance, _allowed_squad,
+                )
+                from app.services.catalog_wholesale import wholesale_usd
+                offer = await session.scalar(
+                    select(CommercialTariff).where(
+                        CommercialTariff.id == catalog_tariff_id,
+                        CommercialTariff.status == "published",
+                    ).with_for_update()
+                )
+                if (offer is None or offer.revision != catalog_expected_revision
+                        or not supports_issuance(offer)
+                        or not await _allowed_squad(session, offer.internal_squad_uuid)
+                        or provision_plan(offer) != plan):
+                    return "changed", None
+                amount = wholesale_usd(offer.period_days, offer.devices, offer.traffic_gb)
+                catalog_snapshot = {
+                    "sku": offer.sku, "revision": offer.revision,
+                    "title_fa": offer.name_fa, "title_ru": offer.name_ru,
+                    "title_en": offer.name_en, "period_days": offer.period_days,
+                    "devices": offer.devices, "traffic_gb": offer.traffic_gb,
+                    "internal_squad_uuid": offer.internal_squad_uuid,
+                    "base_retail_toman": offer.retail_toman,
+                    "wholesale_usd": amount,
+                }
             if float(dealer.dealer_balance) < amount:
                 return "insufficient", None
 
@@ -406,6 +437,8 @@ async def reserve_dealer_subscription_purchase(
                 traffic_limit_gb=0,
                 status="pending",
                 price_paid_usd=amount,
+                catalog_tariff_id=catalog_tariff_id,
+                catalog_snapshot=catalog_snapshot,
             )
             session.add(sub)
             await session.flush()
