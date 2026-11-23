@@ -13,7 +13,7 @@ from aiogram.fsm.storage.base import StorageKey
 from aiogram.types import InlineKeyboardMarkup
 
 from app.config import settings
-from app.keyboards.builders import admin_menu_kb, dealer_menu_kb, raw_btn
+from app.keyboards.builders import admin_menu_kb, analytics_button, dealer_menu_kb, raw_btn
 from app.middlewares.i18n import I18nMiddleware
 from app.repositories import commercial_catalog_repo as catalog
 from app.utils.menu import send_with_logo
@@ -126,9 +126,14 @@ async def _home(target, t, user):
         [raw_btn(t("catalog_tariffs"), "cat:list:0")],
         [raw_btn(t("catalog_new"), "cat:new")],
         [raw_btn(t("catalog_import"), "cat:import")],
+        [raw_btn(t("dealer_btn_promos"), "dealer:promos")],
+        [raw_btn(t("broadcast_menu"), "bc:open")],
         [raw_btn(t("catalog_server_locked"), "cat:server")],
         [raw_btn(t("btn_back"), "cat:exit")],
     ]
+    analytics = analytics_button(t("btn_analytics"))
+    if analytics:
+        rows.insert(0, [analytics])
     await send_with_logo(
         target,
         t("catalog_heading", total=numbers["all"], published=numbers["published"],
