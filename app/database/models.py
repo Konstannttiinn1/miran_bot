@@ -92,6 +92,7 @@ class DealerSubscription(Base):
     price_paid_usd: Mapped[float] = mapped_column(Float, default=0.0)
     catalog_tariff_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     catalog_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    request_key: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
