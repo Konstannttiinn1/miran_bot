@@ -9,6 +9,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from app.database.engine import async_session_factory
 from app.database.models import (
     CommercialTariff,
+    AnalyticsSale,
     DealerLog,
     DealerSubscription,
     DealerTest,
@@ -1345,3 +1346,42 @@ async def list_pending_crypto_orders() -> list[Order]:
             )
         )
         return list(result.scalars().all())
+
+
+async def record_manual_dealer_receipt(
+    dealer_id: int, sub_id: int, received_toman: int,
+) -> bool:
+    """Set actual proceeds once for the dealer's most recent confirmed sale.
+
+    The offered retail_toman and USD cost remain immutable. Subsequent changes
+    require explicit administrator reconciliation, not dealer overwrites.
+    """
+    if (not isinstance(received_toman, int) or isinstance(received_toman, bool)
+            or not 0 <= received_toman <= 1_000_000_000_000):
+        raise ValueError("Invalid customer payment amount")
+    async with async_session_factory() as session:
+        async with session.begin():
+            dealer = await session.get(User, dealer_id)
+            if dealer is None or dealer.role != "dealer" or dealer.is_blocked:
+                return False
+            owned = await session.scalar(select(DealerSubscription.id).where(
+                DealerSubscription.id == sub_id,
+                DealerSubscription.dealer_id == dealer_id,
+                DealerSubscription.status != "failed",
+            ))
+            if owned is None:
+                return False
+            sale = await session.scalar(select(AnalyticsSale).where(
+                AnalyticsSale.dealer_telegram_id == dealer.telegram_id,
+                AnalyticsSale.managed_subscription_id == sub_id,
+                AnalyticsSale.kind == "subscription",
+            ).order_by(AnalyticsSale.id.desc()).limit(1).with_for_update())
+            if sale is None or sale.actual_received_toman is not None:
+                return False
+            sale.actual_received_toman = received_toman
+            session.add(DealerLog(
+                dealer_id=dealer_id, action="dealer_manual_receipt_recorded",
+                details={"sale_id": sale.id, "managed_subscription_id": sub_id,
+                         "actual_received_toman": received_toman},
+            ))
+            return True
