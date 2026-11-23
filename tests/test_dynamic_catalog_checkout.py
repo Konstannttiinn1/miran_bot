@@ -148,3 +148,32 @@ async def test_catalog_flag_and_unsupported_sku_do_not_create_orders(database, m
     async with database() as session:
         from app.database.models import Order
         assert list((await session.scalars(select(Order))).all()) == []
+
+
+@pytest.mark.asyncio
+async def test_checkout_rejects_changed_price_since_customer_preview(database, monkeypatch):
+    monkeypatch.setattr(settings, "dynamic_catalog_enabled", True)
+    monkeypatch.setattr(settings, "remnawave_squad_uuid", "test-squad")
+    dealer = await db_repo.get_or_create_user(81301)
+    await db_repo.set_user_role(dealer.telegram_id, "dealer")
+    buyer = await db_repo.get_or_create_user(81302)
+    item = await _published(dealer.telegram_id, retail_toman=190000)
+    shown_revision = item.revision
+    item = await catalogue.update_tariff(
+        dealer.telegram_id, item.id, item.revision,
+        action="edit", changes={"retail_toman": 240000},
+    )
+    with pytest.raises(ValueError, match="price changed"):
+        await db_repo.create_order(
+            buyer.id, "month1d2", 10, "xtr",
+            catalog_tariff_id=item.id, catalog_expected_revision=shown_revision,
+        )
+    async with database() as session:
+        from app.database.models import Order
+        assert list((await session.scalars(select(Order))).all()) == []
+    fresh = await db_repo.create_order(
+        buyer.id, "month1d2", 10, "xtr",
+        catalog_tariff_id=item.id, catalog_expected_revision=item.revision,
+    )
+    assert fresh.catalog_snapshot["revision"] == item.revision
+    assert fresh.catalog_snapshot["base_retail_toman"] == 240000
