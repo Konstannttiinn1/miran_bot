@@ -129,8 +129,9 @@ async def _show_subscription_card(
         traffic=sub.traffic_limit_gb, expire=expire, status=status,
     )
     tariff = PLANS.get(getattr(sub, "plan", None), {})
-    if tariff.get("monthly"):
-        text += t("subscription_devices", devices=tariff["devices"]) + "\n"
+    devices = (sub.catalog_snapshot or {}).get("devices") or tariff.get("devices")
+    if devices:
+        text += t("subscription_devices", devices=devices) + "\n"
     if link:
         text += f"\n🔗 <code>{h(link)}</code>"
     else:
@@ -191,6 +192,10 @@ async def dealer_buy_subscription(callback: types.CallbackQuery, t, lang, db_use
         return
     await state.clear()
     await callback.answer()
+    if settings.dynamic_catalog_enabled:
+        from app.handlers.dealer_catalog import show_offers
+        await show_offers(callback, t, lang, db_user)
+        return
     await send_with_logo(
         callback,
         t("dealer_buy_intro"),
@@ -490,6 +495,10 @@ async def dealer_subscription_renew(callback: types.CallbackQuery, t, lang, db_u
         await callback.answer(strip_custom_emoji_tags(t("subscription_not_found")), show_alert=True)
         return
     await callback.answer()
+    if settings.dynamic_catalog_enabled:
+        from app.handlers.dealer_catalog import show_offers
+        await show_offers(callback, t, lang, db_user, sub_id=sub_id, page=page)
+        return
     await send_with_logo(
         callback,
         t("dealer_renew_intro", id=sub_id),
