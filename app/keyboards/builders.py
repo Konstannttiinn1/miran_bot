@@ -248,6 +248,7 @@ def dealer_subscription_card_kb(
         [_btn(t, "btn_renew", f"dealer:renew:{sub_id}:{page}")],
         [_btn(t, "dealer_btn_traffic_topup", f"dealer:traffic:{sub_id}:{page}")],
         [_btn(t, "btn_rename", f"dealer:rename:{sub_id}:{page}")],
+        [_btn(t, "dcat_received_button", f"dealer:income:{sub_id}:{page}")],
         [_btn(t, "btn_back", f"dealer:subs:{page}")],
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
