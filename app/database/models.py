@@ -70,6 +70,7 @@ class MonthlyTrafficQuota(Base):
     email: Mapped[str] = mapped_column(String, primary_key=True)
     initialized: Mapped[bool] = mapped_column(Boolean, default=False)
     extra_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    base_bytes: Mapped[int] = mapped_column(BigInteger, default=100 * 1024 ** 3)
     last_reset_at: Mapped[datetime | None] = mapped_column(nullable=True)
     valid_until: Mapped[datetime | None] = mapped_column(nullable=True)
 
@@ -88,6 +89,8 @@ class DealerSubscription(Base):
     traffic_limit_gb: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String, default="pending")
     price_paid_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    catalog_tariff_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    catalog_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
@@ -187,6 +190,7 @@ class AnalyticsSale(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(24, 8))
     currency: Mapped[str] = mapped_column(String(12))
     retail_toman: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    actual_received_toman: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     confirmed_at: Mapped[datetime] = mapped_column(index=True)
     time_estimated: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -278,4 +282,16 @@ class CommercialTariffChange(Base):
     action: Mapped[str] = mapped_column(String(32))
     before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     after: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class CommercialInternalSquad(Base):
+    """Administrator-controlled allowlist of Internal Squads usable by dealers."""
+
+    __tablename__ = "commercial_internal_squads"
+
+    uuid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(80))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_tg: Mapped[int] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
