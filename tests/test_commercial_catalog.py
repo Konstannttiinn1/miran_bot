@@ -114,7 +114,7 @@ async def test_legacy_import_is_idempotent_and_preserves_changes(database, monke
     assert current.retail_toman == 543210 and current.revision == updated.revision
     cloned = await catalog.clone_tariff(dealer.telegram_id, target.id)
     assert cloned.status == "draft" and cloned.sku.startswith("cat-")
-    assert cloned.id != target.id and cloned.retail_toman == target.retail_toman
+    assert cloned.id != target.id and cloned.retail_toman == current.retail_toman
 
 
 @pytest.mark.asyncio
