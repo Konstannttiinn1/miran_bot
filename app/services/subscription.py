@@ -88,6 +88,52 @@ async def _grant_vpn(
     return link, expire_at
 
 
+async def _grant_catalog_order(
+    user_id: int, telegram_id: int, order, bonus_days: int,
+) -> tuple[str, object]:
+    """Honor an immutable paid offer even after it is paused or re-priced."""
+    snap = order.catalog_snapshot
+    if not isinstance(snap, dict) or not snap.get("sku"):
+        raise ValueError("Paid catalogue snapshot is missing")
+    days = int(snap["period_days"])
+    devices = int(snap["devices"])
+    traffic_gb = int(snap["traffic_gb"])
+    squad = str(snap["internal_squad_uuid"])
+    if not squad:
+        raise ValueError("Paid catalogue Internal Squad is missing")
+    sub_id = order.subscription_id
+    if sub_id is not None:
+        sub = await customer_subscriptions_repo.get_subscription(user_id, sub_id)
+        if sub is None or sub.status not in {"active", "pending"}:
+            raise ValueError("Target subscription is missing")
+        email = sub.xui_email
+    else:
+        email = str(telegram_id)
+        sub = await db_repo.get_subscription(user_id)
+    provider = get_vpn_provider()
+    # The selected squad applies only to newly created Remnawave users.
+    # Existing users keep their assigned inbounds; renewal never silently
+    # changes their server access.
+    expiry = await grant_monthly(
+        provider, email, days, limit_ip=devices, bonus_days=bonus_days,
+        traffic_gb=traffic_gb, squad_uuid=squad, custom_terms=True,
+    )
+    link = await subscription_link(email)
+    if sub_id is None:
+        saved = await db_repo.upsert_subscription(
+            user_id, email, expiry, traffic_limit_gb=traffic_gb, only_extend=True,
+        )
+        sub_id = saved.id
+    ok = await customer_subscriptions_repo.update_subscription(
+        user_id, sub_id, plan=order.plan, catalog_snapshot=snap,
+        expire_at=expiry, status="active",
+        notified_3d=False, notified_1d=False,
+    )
+    if not ok:
+        raise RuntimeError("Panel confirmed catalogue purchase but local subscription is missing")
+    return link, expiry
+
+
 async def grant_paid_order(user_id: int, telegram_id: int, order) -> tuple[str, object]:
     """Apply only the selected order's VPN target and snapshotted promo bonus."""
     owner = await db_repo.get_user_by_id(user_id)
@@ -97,6 +143,8 @@ async def grant_paid_order(user_id: int, telegram_id: int, order) -> tuple[str, 
     sub_id = order.subscription_id
     if order.plan == TRAFFIC_TOPUP:
         return await grant_traffic_topup(user_id, sub_id)
+    if order.catalog_snapshot:
+        return await _grant_catalog_order(user_id, telegram_id, order, bonus_days)
     if sub_id is not None:
         sub = await customer_subscriptions_repo.get_subscription(user_id, sub_id)
         if sub is None or sub.status not in {"active", "pending"}:
