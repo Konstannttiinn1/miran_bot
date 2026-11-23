@@ -218,7 +218,9 @@ async def exit_catalog(callback: types.CallbackQuery, state: FSMContext, t, db_u
     await clear_catalog_draft(state)
     await callback.answer()
     markup = admin_menu_kb() if db_user.telegram_id in settings.admin_list else dealer_menu_kb(t)
-    await send_with_logo(callback, t("dealer_menu_text"), reply_markup=markup)
+    label = ("👑 Админ-меню:\n🔧 /testvpn | /setdealer | /topup"
+             if db_user.telegram_id in settings.admin_list else t("dealer_menu_text"))
+    await send_with_logo(callback, label, reply_markup=markup)
 
 
 @router.callback_query(F.data == "cat:server")
