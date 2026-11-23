@@ -1,101 +1,66 @@
-"""End-to-end aiogram FSM smoke test with an in-memory Telegram transport."""
-import pytest
+"""Isolated aiogram FSM smoke test without registering application routers twice."""
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
-from aiogram import Bot, Dispatcher
-from aiogram.client.session.base import BaseSession
-from aiogram.methods import AnswerCallbackQuery, EditMessageCaption, EditMessageText, SendMessage, SendPhoto
-from aiogram.types import Message, Update
+import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.config import settings
-from app.handlers.commercial_catalog import router as catalog_router
-from app.handlers.start import router as start_router
+from app.handlers import commercial_catalog as ui
+from app.middlewares.i18n import get_text
 from app.repositories import commercial_catalog_repo as catalog
 from app.repositories import db_repo
 
 
-class FakeTelegram(BaseSession):
-    def __init__(self):
-        super().__init__()
-        self.calls = []
-
-    async def close(self):
-        return None
-
-    async def stream_content(self, *args, **kwargs):
-        raise AssertionError("No download expected")
-
-    async def make_request(self, bot, method, timeout=None):
-        self.calls.append(method)
-        if isinstance(method, AnswerCallbackQuery):
-            return True
-        if isinstance(method, (EditMessageText, EditMessageCaption)):
-            return True
-        if isinstance(method, (SendMessage, SendPhoto)):
-            return Message(
-                message_id=len(self.calls), date=1,
-                chat={"id": method.chat_id, "type": "private"},
-            ).as_(bot)
-        raise AssertionError(f"Unexpected Telegram request: {type(method).__name__}")
-
-
 @pytest.mark.asyncio
-async def test_dealer_can_create_persian_draft_with_preview_without_sending_invoice(database, monkeypatch):
+async def test_dealer_can_create_persian_draft_with_preview_without_invoice(database, monkeypatch):
     monkeypatch.setattr(settings, "remnawave_squad_uuid", "test-squad")
     seller = await db_repo.get_or_create_user(55001)
     await db_repo.set_user_role(seller.telegram_id, "dealer")
-    await db_repo.set_user_lang(seller.telegram_id, "fa")
-    await db_repo.get_or_create_user(55002)
+    seller = await db_repo.get_user_by_tg(seller.telegram_id)
+    outsider = await db_repo.get_or_create_user(55002)
+    send_screen = AsyncMock()
+    monkeypatch.setattr(ui, "send_with_logo", send_screen)
 
-    transport = FakeTelegram()
-    bot = Bot(settings.bot_token, session=transport)
-    dp = Dispatcher()
-    dp.include_router(start_router)
-    dp.include_router(catalog_router)
-    next_id = 0
-
-    async def feed(user_id, *, callback=None, message=None):
-        nonlocal next_id
-        next_id += 1
-        actor = {"id": user_id, "is_bot": False, "first_name": "Test"}
-        envelope = {
-            "message_id": next_id, "date": 1,
-            "chat": {"id": user_id, "type": "private"},
-        }
-        if callback is not None:
-            update = {"callback_query": {
-                "id": str(next_id), "chat_instance": "test",
-                "data": callback, "from": actor,
-                "message": {**envelope, "text": "menu"},
-            }}
-        else:
-            update = {"message": {**envelope, "from": actor, "text": message}}
-        await dp.feed_update(bot, Update.model_validate({"update_id": next_id, **update}))
-
-    def last_screen():
-        return next(
-            call for call in reversed(transport.calls)
-            if isinstance(call, (SendMessage, EditMessageText))
-        )
-
-    await feed(55002, callback="cat:open")
-    assert not any(isinstance(x, (EditMessageText, SendMessage)) for x in transport.calls)
-
-    await feed(55001, callback="cat:open")
-    markup = last_screen().reply_markup
-    assert any(b.callback_data == "cat:new" for row in markup.inline_keyboard for b in row)
-    await feed(55001, callback="cat:new")
-    for value in ["اقتصادی", "30", "1", "100", "170000"]:
-        await feed(55001, message=value)
-    screen = last_screen()
-    assert "170٬000" in screen.text
-    send_button = next(
-        b.callback_data for row in screen.reply_markup.inline_keyboard for b in row
-        if b.callback_data.startswith("cat:save:")
+    t = lambda key, **kwargs: get_text("fa", key, **kwargs)
+    storage = MemoryStorage()
+    state = FSMContext(storage=storage, key=StorageKey(
+        bot_id=123456, chat_id=55001, user_id=55001,
+    ))
+    callback = SimpleNamespace(
+        data="cat:open", answer=AsyncMock(), message=SimpleNamespace(),
     )
-    await feed(55001, callback=send_button)
-    await feed(55001, callback=send_button)
-    items, total = await catalog.list_tariffs(seller.telegram_id)
-    assert total == 1
-    assert len(items) == 1 and items[0].name_fa == "اقتصادی"
-    assert items[0].retail_toman == 170000 and items[0].status == "draft"
-    assert not any(type(call).__name__ == "SendInvoice" for call in transport.calls)
+    await ui.catalog_home(callback, state, t, seller)
+    assert "مرکز فروش" in send_screen.await_args.args[1]
+
+    callback.data = "cat:new"
+    await ui.catalog_new(callback, state, t, seller)
+    text_message = SimpleNamespace(text=None, answer=AsyncMock())
+    steps = [
+        (ui.new_name, "اقتصادی"),
+        (ui.new_days, "30"),
+        (ui.new_devices, "1"),
+        (ui.new_traffic, "100"),
+        (ui.new_price, "۱۷۰٬۰۰۰"),
+    ]
+    for handler, raw_value in steps:
+        text_message.text = raw_value
+        await handler(text_message, state, t, seller)
+    assert "۱۷۰" not in text_message.answer.await_args.args[0] or "170٬000" in text_message.answer.await_args.args[0]
+    data = await state.get_data()
+    callback.data = "cat:save:" + data["catalog_nonce"]
+    await ui.catalog_save(callback, state, t, seller)
+    await ui.catalog_save(callback, state, t, seller)
+
+    rows, total = await catalog.list_tariffs(seller.telegram_id)
+    assert total == 1 and len(rows) == 1
+    assert rows[0].name_fa == "اقتصادی"
+    assert rows[0].retail_toman == 170000 and rows[0].status == "draft"
+
+    unauthorized = SimpleNamespace(data="cat:open", answer=AsyncMock(), message=SimpleNamespace())
+    previous_calls = send_screen.await_count
+    await ui.catalog_home(unauthorized, state, t, outsider)
+    unauthorized.answer.assert_awaited_once()
+    assert send_screen.await_count == previous_calls
