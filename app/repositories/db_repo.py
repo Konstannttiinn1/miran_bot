@@ -8,6 +8,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.database.engine import async_session_factory
 from app.database.models import (
+    CommercialTariff,
     DealerLog,
     DealerSubscription,
     DealerTest,
@@ -984,6 +985,7 @@ async def create_order(
     order_type: str = "purchase", *, retail_toman: int | None = None,
     apply_promo: bool = False, subscription_id: int | None = None,
     new_subscription: bool = False, promo_code: str | None = None,
+    catalog_tariff_id: int | None = None,
 ) -> Order:
     """Lock an activated discount coupon to exactly one checkout.
 
@@ -992,6 +994,40 @@ async def create_order(
     """
     async with async_session_factory() as session:
         async with session.begin():
+            # Validate and reprice the published catalogue product INSIDE the
+            # order transaction, before any invoice or promo reservation.
+            catalog_snapshot = None
+            if catalog_tariff_id is not None:
+                if not settings.dynamic_catalog_enabled or order_type != "purchase" or plan == "test":
+                    raise ValueError("Dynamic catalogue checkout is disabled")
+                item = await session.scalar(
+                    select(CommercialTariff).where(
+                        CommercialTariff.id == catalog_tariff_id,
+                        CommercialTariff.status == "published",
+                    ).with_for_update()
+                )
+                from app.repositories.commercial_catalog_repo import supports_issuance
+                from app.services.catalog_pricing import plan_code, retail_amount
+                if item is None or not supports_issuance(item) or plan != plan_code(
+                    item.period_days, item.devices, item.traffic_gb
+                ):
+                    raise ValueError("Catalogue selection was changed or disabled")
+                catalog_snapshot = {
+                    "sku": item.sku, "title_fa": item.name_fa,
+                    "title_ru": item.name_ru, "title_en": item.name_en,
+                    "revision": item.revision, "period_days": item.period_days,
+                    "devices": item.devices, "traffic_gb": item.traffic_gb,
+                    "base_retail_toman": item.retail_toman,
+                    "internal_squad_uuid": item.internal_squad_uuid,
+                }
+                # Never trust a price submitted by the chat/FSM. The locked
+                # product row is authoritative. Capture the exact currency quote.
+                retail_toman = item.retail_toman
+                amount = retail_amount(
+                    retail_toman, currency, rate=settings.toman_per_usd,
+                    stars_reward=settings.stars_reward_usd,
+                    dealer_discount=settings.dealer_discount,
+                )
             if new_subscription:
                 if subscription_id is not None or order_type != "purchase" or plan == "test":
                     raise ValueError("A new slot is available only for a paid subscription")
@@ -1097,6 +1133,8 @@ async def create_order(
                 user_id=user_id, plan=plan, amount=amount,
                 currency=currency, order_type=order_type,
                 subscription_id=subscription_id,
+                catalog_tariff_id=catalog_tariff_id,
+                catalog_snapshot=catalog_snapshot,
             )
             session.add(order)
             await session.flush()
