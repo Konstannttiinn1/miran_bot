@@ -231,3 +231,43 @@ class PromoRedemption(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # single checkout binding
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class CommercialTariff(Base):
+    """Editable Orion commercial catalogue; no effect on legacy checkout until enabled."""
+
+    __tablename__ = "commercial_tariffs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sku: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name_fa: Mapped[str] = mapped_column(String(80))
+    name_ru: Mapped[str] = mapped_column(String(80), default="")
+    name_en: Mapped[str] = mapped_column(String(80), default="")
+    period_days: Mapped[int] = mapped_column(Integer)
+    devices: Mapped[int] = mapped_column(Integer)
+    traffic_gb: Mapped[int] = mapped_column(Integer)
+    retail_toman: Mapped[int] = mapped_column(BigInteger)
+    internal_squad_uuid: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    created_by_tg: Mapped[int] = mapped_column(BigInteger)
+    updated_by_tg: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class CommercialTariffChange(Base):
+    """Append-only catalogue audit; actor ID survives account removal."""
+
+    __tablename__ = "commercial_tariff_changes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tariff_id: Mapped[int] = mapped_column(
+        ForeignKey("commercial_tariffs.id"), index=True
+    )
+    actor_tg: Mapped[int] = mapped_column(BigInteger)
+    action: Mapped[str] = mapped_column(String(32))
+    before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    after: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
