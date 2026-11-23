@@ -183,9 +183,14 @@ async def add(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext
     await state.update_data(
         purchase_mode="new" if primary else "primary",
         subscription_id=None, plan=None, order_id=None, checkout_promo_code=None,
+        catalog_tariff_id=None,
     )
     with_test = primary is None and await db_repo.can_claim_test(db_user.id)
     await callback.answer()
+    if settings.dynamic_catalog_enabled:
+        from app.handlers.commercial_checkout import show_offers
+        await show_offers(callback, t, lang, db_user.id)
+        return
     await send_with_logo(
         callback, get_plan_intro(t, lang),
         reply_markup=plans_kb(t, with_test=with_test, lang=lang),
@@ -205,9 +210,13 @@ async def renew(callback: types.CallbackQuery, t, lang, db_user, state: FSMConte
     await state.set_state(Purchase.choosing_plan)
     await state.update_data(
         purchase_mode="renew", subscription_id=sub_id, plan=None,
-        order_id=None, checkout_promo_code=None,
+        order_id=None, checkout_promo_code=None, catalog_tariff_id=None,
     )
     await callback.answer()
+    if settings.dynamic_catalog_enabled:
+        from app.handlers.commercial_checkout import show_offers
+        await show_offers(callback, t, lang, db_user.id)
+        return
     await send_with_logo(
         callback, t("customer_renew_intro", name=h(_label(t, sub))) + "\n\n" + get_plan_intro(t, lang),
         reply_markup=plans_kb(t, with_test=False, lang=lang),
