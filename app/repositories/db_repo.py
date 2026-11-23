@@ -986,6 +986,7 @@ async def create_order(
     apply_promo: bool = False, subscription_id: int | None = None,
     new_subscription: bool = False, promo_code: str | None = None,
     catalog_tariff_id: int | None = None,
+    catalog_expected_revision: int | None = None,
 ) -> Order:
     """Lock an activated discount coupon to exactly one checkout.
 
@@ -1008,6 +1009,10 @@ async def create_order(
                 )
                 from app.repositories.commercial_catalog_repo import supports_issuance
                 from app.services.catalog_pricing import plan_code, retail_amount
+                if (catalog_expected_revision is not None and
+                        (isinstance(catalog_expected_revision, bool) or
+                         item is None or item.revision != catalog_expected_revision)):
+                    raise ValueError("Catalogue price changed before checkout")
                 if item is None or not supports_issuance(item) or plan != plan_code(
                     item.period_days, item.devices, item.traffic_gb
                 ):
