@@ -32,6 +32,14 @@ async def init_db() -> None:
         order_cols = await conn.run_sync(
             lambda sync: {column["name"] for column in inspect(sync).get_columns("orders")}
         )
+        if "catalog_tariff_id" not in order_cols:
+            await conn.execute(text(
+                "ALTER TABLE orders ADD COLUMN catalog_tariff_id INTEGER REFERENCES commercial_tariffs(id)"
+            ))
+        if "catalog_snapshot" not in order_cols:
+            await conn.execute(text(
+                "ALTER TABLE orders ADD COLUMN catalog_snapshot JSON"
+            ))
         if "subscription_id" not in order_cols:
             await conn.execute(text(
                 "ALTER TABLE orders ADD COLUMN subscription_id INTEGER REFERENCES subscriptions(id)"
@@ -67,6 +75,10 @@ async def init_db() -> None:
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_orders_subscription_id "
             "ON orders(subscription_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_orders_catalog_tariff_id "
+            "ON orders(catalog_tariff_id)"
         ))
         # create_all() does not upgrade existing promo tables.
         promo_cols = await conn.run_sync(
