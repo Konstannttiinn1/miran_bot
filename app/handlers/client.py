@@ -214,7 +214,7 @@ async def _checkout_promo(user_id: int, data: dict):
 async def _show_checkout(target, t, lang, db_user, state: FSMContext) -> None:
     data = await state.get_data()
     plan = data.get("plan")
-    if plan not in PLANS or not PLANS[plan].get("monthly"):
+    if (plan not in PLANS or not PLANS[plan].get("monthly")) and data.get("catalog_tariff_id") is None:
         await send_with_logo(target, t("payment_error"))
         return
     promo = await _checkout_promo(db_user.id, data)
@@ -261,7 +261,7 @@ async def choose_devices(callback: types.CallbackQuery, t, lang, db_user, state:
 @router.callback_query(F.data == "checkout:promo")
 async def checkout_promo_start(callback: types.CallbackQuery, t, db_user, state: FSMContext):
     data = await state.get_data()
-    if data.get("plan") not in PLANS or data.get("plan") == "test":
+    if (data.get("plan") not in PLANS and data.get("catalog_tariff_id") is None) or data.get("plan") == "test":
         await callback.answer(t("payment_error"), show_alert=True)
         return
     await state.set_state(Purchase.entering_promo)
@@ -327,7 +327,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
         await state.clear()
         await send_with_logo(callback, t("access_denied"))
         return
-    if not is_sale_product(plan) or plan == "test":
+    if (not is_sale_product(plan) and data.get("catalog_tariff_id") is None) or plan == "test":
         await state.clear()
         await send_with_logo(callback, t("payment_error"))
         return
@@ -348,7 +348,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
     else:
         item = None
     order_type = "traffic_topup" if plan == TRAFFIC_TOPUP else "purchase"
-    if get_tariff(plan).get("monthly") and provider_name() != "remnawave":
+    if (catalog_id is not None or get_tariff(plan).get("monthly")) and provider_name() != "remnawave":
         await send_with_logo(callback, t("sales_unavailable"))
         return
     back_callback = (
@@ -382,17 +382,29 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
             return None
 
     if method == "stars":
-        original_stars = get_stars_price(plan, settings.stars_reward_usd)
+        if item is not None:
+            from app.services.catalog_pricing import retail_amount
+            original_stars = retail_amount(
+                item.retail_toman, "xtr", rate=settings.toman_per_usd,
+                stars_reward=settings.stars_reward_usd,
+                dealer_discount=settings.dealer_discount,
+            )
+        else:
+            original_stars = get_stars_price(plan, settings.stars_reward_usd)
         order = await create_checkout_order(original_stars, "xtr")
         if order is None:
             return
         await state.clear()
         stars = int(order.amount)
-        title, description, label = _invoice_copy(lang, plan, stars)
+        if order.catalog_snapshot:
+            title = description = label = ""
+        else:
+            title, description, label = _invoice_copy(lang, plan, stars)
         if order.catalog_snapshot:
             name = (order.catalog_snapshot.get(f"title_{lang}")
                     or order.catalog_snapshot.get("title_fa") or "")
             title = t("cshop_invoice", name=name)[:32]
+            label = str(stars) + " XTR"
             description = t("cshop_summary", name=name,
                 days=order.catalog_snapshot["period_days"],
                 devices=order.catalog_snapshot["devices"],
@@ -414,7 +426,15 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
 
     if method == "dealer":
         retail_toman = item.retail_toman if item is not None else get_toman_price(plan)
-        dealer_usd = get_dealer_debit_usd(
+        if item is not None:
+            from app.services.catalog_pricing import retail_amount
+            dealer_usd = retail_amount(
+                item.retail_toman, "usd", rate=settings.toman_per_usd,
+                stars_reward=settings.stars_reward_usd,
+                dealer_discount=settings.dealer_discount,
+            )
+        else:
+            dealer_usd = get_dealer_debit_usd(
             plan,
             settings.toman_per_usd,
             settings.dealer_discount,
@@ -448,7 +468,15 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
                 reply_markup=payment_kb(t, back_callback, allow_promo=plan != TRAFFIC_TOPUP),
             )
             return
-        price_usd = get_usd_price(plan)
+        if item is not None:
+            from app.services.catalog_pricing import retail_amount
+            price_usd = retail_amount(
+                item.retail_toman, "usdt", rate=settings.toman_per_usd,
+                stars_reward=settings.stars_reward_usd,
+                dealer_discount=settings.dealer_discount,
+            )
+        else:
+            price_usd = get_usd_price(plan)
         order = await create_checkout_order(price_usd, "usdt")
         if order is None:
             return
@@ -492,7 +520,7 @@ async def stars_pre_checkout(query: types.PreCheckoutQuery, t, lang, db_user):
         and payload_user_id == db_user.id
         and order.plan == plan
         and plan != "test"
-        and (is_sale_product(plan) or plan in RETIRED_PLANS)
+        and (is_sale_product(plan) or plan in RETIRED_PLANS or bool(order.catalog_snapshot))
         and expected > 0
         and float(order.amount) == expected
         and order.currency.lower() == "xtr"
@@ -527,7 +555,7 @@ async def stars_successful_payment(message: types.Message, t, lang, db_user):
         and payload_user_id == db_user.id
         and order.plan == plan
         and plan != "test"
-        and (is_sale_product(plan) or plan in RETIRED_PLANS)
+        and (is_sale_product(plan) or plan in RETIRED_PLANS or bool(order.catalog_snapshot))
         and expected > 0
         and float(order.amount) == expected
         and order.currency.lower() == "xtr"
@@ -584,7 +612,8 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
         order is None or order.user_id != db_user.id
         or order.currency.lower() != "usd" or order.status != "pending"
         or order.plan == "test"
-        or (not is_sale_product(order.plan) and order.plan not in RETIRED_PLANS)
+        or (not is_sale_product(order.plan) and order.plan not in RETIRED_PLANS
+            and not order.catalog_snapshot)
     ):
         await message.answer(t("payment_error"))
         return
@@ -622,7 +651,7 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
                     "dealer_new_order",
                     order_id=order_id,
                     username=db_user.username or db_user.telegram_id,
-                    plan=_product_label(plan, d.lang),
+                    plan=_product_label(plan, d.lang) if not order.catalog_snapshot else h((order.catalog_snapshot.get(f"title_{d.lang}") or order.catalog_snapshot["title_fa"])),
                     client_amount=(
                         _format_toman(client_price, d.lang)
                         if known_client_price else get_text(d.lang, "dealer_original_amount")
@@ -646,7 +675,7 @@ async def receive_receipt(message: types.Message, t, lang, db_user, state: FSMCo
         f"👤 Покупатель: {name}\n"
         f"Username: {username}\n"
         f"🆔 Telegram ID: <code>{db_user.telegram_id}</code>\n"
-        f"📦 Тариф: {_product_label(plan, 'ru')}\n"
+        f"📦 Тариф: {(_product_label(plan, 'ru') if not order.catalog_snapshot else h(order.catalog_snapshot.get('title_ru') or order.catalog_snapshot['title_fa']))}\n"
         f"💵 Сумма по реквизитам: {client_amount}\n"
         f"💳 Спишется с баланса дилера: {_format_usd(dealer_price_usd)}\n"
         "⏳ Статус: ожидает проверки дилером.",
