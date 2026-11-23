@@ -6,6 +6,7 @@ from secrets import token_hex
 from weakref import WeakValueDictionary
 
 from aiogram import F, Router, types
+from aiogram.filters import Command
 from aiogram.enums import ChatType
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -190,6 +191,8 @@ async def _card(target, t, actor: int, item_id: int, page: int):
              raw_btn(t("catalog_name"), f"cat:edit:name:{item_id}:{item.revision}:{page}")],
         ])
         if item.status != "published":
+            rows.append([raw_btn(t("catalog_select_squad"),
+                                 f"cat:squads:{item_id}:{item.revision}:{page}")])
             rows.extend([
                 [raw_btn(t("catalog_days"), f"cat:edit:days:{item_id}:{item.revision}:{page}"),
                  raw_btn(t("catalog_devices"), f"cat:edit:devices:{item_id}:{item.revision}:{page}")],
@@ -233,6 +236,93 @@ async def server_locked(callback: types.CallbackQuery, t, db_user):
     if await _denied(callback, t, db_user):
         return
     await callback.answer(t("catalog_server_locked"), show_alert=True)
+
+
+@router.message(Command("catalogsquad"))
+async def admin_add_squad(message: types.Message, t, db_user):
+    """Admin-only: whitelist a known Internal Squad UUID, not create one in panel."""
+    if message.from_user.id not in settings.admin_list:
+        return
+    parts = (message.text or "").strip().split(maxsplit=2)
+    if len(parts) != 3:
+        await message.answer("Использование: /catalogsquad UUID Название")
+        return
+    try:
+        await catalog.upsert_allowed_squad(db_user.telegram_id, parts[1], parts[2])
+    except (catalog.CatalogInvalid, catalog.CatalogDenied):
+        await message.answer("Некорректный UUID или название. Проверь Internal Squad в Remnawave.")
+        return
+    await message.answer("✅ Internal Squad разрешён для каталога. В самой Remnawave изменений нет.")
+
+
+@router.message(Command("catalogsquadoff"))
+async def admin_disable_squad(message: types.Message, t, db_user):
+    if message.from_user.id not in settings.admin_list:
+        return
+    parts = (message.text or "").strip().split()
+    if len(parts) != 2:
+        await message.answer("Использование: /catalogsquadoff UUID")
+        return
+    squads = await catalog.available_squads(db_user.telegram_id)
+    label = next((name for uuid, name in squads if uuid == parts[1]), "Internal Squad")
+    try:
+        await catalog.upsert_allowed_squad(db_user.telegram_id, parts[1], label, enabled=False)
+    except (catalog.CatalogInvalid, catalog.CatalogDenied):
+        await message.answer("Нельзя отключить этот UUID или основную группу Orion.")
+        return
+    await message.answer("⏸ Группа скрыта от новых продаж. Существующие VPN не изменились.")
+
+
+@router.callback_query(F.data.startswith("cat:squads:"))
+async def catalog_squad_list(callback: types.CallbackQuery, t, db_user):
+    if await _denied(callback, t, db_user):
+        return
+    try:
+        _, _, raw_id, raw_rev, raw_page = callback.data.split(":")
+        item_id, revision, page = int(raw_id), int(raw_rev), int(raw_page)
+    except (ValueError, TypeError):
+        await callback.answer(t("catalog_missing"), show_alert=True)
+        return
+    item = await catalog.get_tariff(db_user.telegram_id, item_id)
+    if item is None or item.revision != revision or item.status not in {"draft", "paused"}:
+        await callback.answer(t("catalog_conflict"), show_alert=True)
+        return
+    squads = await catalog.available_squads(db_user.telegram_id)
+    rows = [
+        [raw_btn(("✅ " if item.internal_squad_uuid == uuid else "🌐 ") + label[:35],
+                 f"cat:pick_squad:{item_id}:{revision}:{index}:{page}")]
+        for index, (uuid, label) in enumerate(squads)
+    ]
+    rows.append([raw_btn(t("btn_back"), f"cat:card:{item_id}:{page}")])
+    await callback.answer()
+    await send_with_logo(callback, t("catalog_select_squad_help"),
+                         reply_markup=_keyboard(rows))
+
+
+@router.callback_query(F.data.startswith("cat:pick_squad:"))
+async def catalog_squad_choose(callback: types.CallbackQuery, t, db_user):
+    if await _denied(callback, t, db_user):
+        return
+    try:
+        _, _, raw_id, raw_rev, raw_index, raw_page = callback.data.split(":")
+        item_id, revision, index, page = int(raw_id), int(raw_rev), int(raw_index), int(raw_page)
+    except (ValueError, TypeError):
+        await callback.answer(t("catalog_missing"), show_alert=True)
+        return
+    squads = await catalog.available_squads(db_user.telegram_id)
+    if index < 0 or index >= len(squads):
+        await callback.answer(t("catalog_conflict"), show_alert=True)
+        return
+    try:
+        await catalog.update_tariff(
+            db_user.telegram_id, item_id, revision, action="edit",
+            changes={"internal_squad_uuid": squads[index][0]},
+        )
+    except (catalog.CatalogConflict, catalog.CatalogInvalid):
+        await callback.answer(t("catalog_conflict"), show_alert=True)
+        return
+    await callback.answer()
+    await _card(callback, t, db_user.telegram_id, item_id, page)
 
 
 @router.callback_query(F.data.startswith("cat:list:"))
