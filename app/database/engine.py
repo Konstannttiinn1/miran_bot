@@ -80,6 +80,27 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_orders_catalog_tariff_id "
             "ON orders(catalog_tariff_id)"
         ))
+        # Preserve attribution for new dealer-priced products even if the
+        # operational order or customer is subsequently removed.
+        sale_cols = await conn.run_sync(
+            lambda sync: {column["name"] for column in inspect(sync).get_columns("analytics_sales")}
+        )
+        if "catalog_tariff_id" not in sale_cols:
+            await conn.execute(text(
+                "ALTER TABLE analytics_sales ADD COLUMN catalog_tariff_id INTEGER"
+            ))
+        if "catalog_revision" not in sale_cols:
+            await conn.execute(text(
+                "ALTER TABLE analytics_sales ADD COLUMN catalog_revision INTEGER"
+            ))
+        if "catalog_title_fa" not in sale_cols:
+            await conn.execute(text(
+                "ALTER TABLE analytics_sales ADD COLUMN catalog_title_fa VARCHAR(80)"
+            ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_analytics_sales_catalog_tariff_id "
+            "ON analytics_sales(catalog_tariff_id)"
+        ))
         # create_all() does not upgrade existing promo tables.
         promo_cols = await conn.run_sync(
             lambda sync: {column["name"] for column in inspect(sync).get_columns("promo_codes")}
