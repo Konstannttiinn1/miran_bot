@@ -382,6 +382,7 @@ async def reserve_dealer_subscription_purchase(
     amount: float,
     *, catalog_tariff_id: int | None = None,
     catalog_expected_revision: int | None = None,
+    request_key: str | None = None,
 ) -> tuple[str, DealerSubscription | None]:
     """Списывает дилерскую цену и создаёт pending-запись отдельной подписки."""
     if amount <= 0:
@@ -396,6 +397,17 @@ async def reserve_dealer_subscription_purchase(
             ).scalar_one_or_none()
             if dealer is None or dealer.role != "dealer":
                 return "not_dealer", None
+            if request_key:
+                if not isinstance(request_key, str) or len(request_key) > 64:
+                    return "invalid", None
+                existing = await session.scalar(
+                    select(DealerSubscription).where(
+                        DealerSubscription.dealer_id == dealer_id,
+                        DealerSubscription.request_key == request_key,
+                    )
+                )
+                if existing is not None:
+                    return "duplicate", existing
             catalog_snapshot = None
             if catalog_tariff_id is not None:
                 if not settings.dynamic_catalog_enabled:
@@ -439,6 +451,7 @@ async def reserve_dealer_subscription_purchase(
                 price_paid_usd=amount,
                 catalog_tariff_id=catalog_tariff_id,
                 catalog_snapshot=catalog_snapshot,
+                request_key=request_key,
             )
             session.add(sub)
             await session.flush()
