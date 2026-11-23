@@ -190,6 +190,8 @@ async def update_tariff(
                 raise CatalogInvalid("Tariff unavailable")
             if revision != item.revision:
                 raise CatalogConflict("Tariff was changed; reopen it")
+            if action == "edit" and item.status == "published" and not set(changes).issubset({"name_fa", "retail_toman"}):
+                raise CatalogInvalid("Pause the product before changing its technical parameters")
             if action == "publish" and item.status != "draft":
                 raise CatalogInvalid("Only a draft can be published")
             if action == "pause" and item.status != "published":
