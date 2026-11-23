@@ -364,6 +364,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
         "new_subscription": data.get("purchase_mode") == "new",
         "promo_code": data.get("checkout_promo_code"),
         "catalog_tariff_id": catalog_id,
+        "catalog_expected_revision": data.get("catalog_revision"),
     }
 
     async def create_checkout_order(amount, currency, **extras):
