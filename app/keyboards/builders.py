@@ -156,6 +156,7 @@ def dealer_menu_kb(t) -> InlineKeyboardMarkup:
         [_btn(t, "dealer_btn_test", "dealer:test_link")],
         [_btn(t, "dealer_btn_tests", "dealer:tests")],
         [_btn(t, "dealer_btn_promos", "dealer:promos")],
+        [_btn(t, "catalog_menu", "cat:open")],
         [_btn(t, "dealer_btn_buy_sub", "dealer:buy_sub")],
         [_btn(t, "dealer_btn_subscriptions", "dealer:subs")],
         [_btn(t, "btn_dealer_balance", "dealer:balance")],
@@ -314,6 +315,7 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
         [raw_btn("👥 Пользователи", "admin:users")],
         [raw_btn("🤝 Дилеры", "admin:dealers")],
         [raw_btn("🎟️ Промокоды", "admin:promos")],
+        [raw_btn(get_text("ru", "catalog_menu"), "cat:open")],
         [raw_btn(get_text("ru", "broadcast_menu"), "bc:open")],
         [raw_btn("📊 Логи", "admin:logs")],
     ]
