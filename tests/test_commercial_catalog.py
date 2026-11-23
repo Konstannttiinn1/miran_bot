@@ -84,10 +84,10 @@ async def test_dealer_creates_and_edits_draft_without_touching_legacy_orders(dat
             select(CommercialTariffChange).where(CommercialTariffChange.tariff_id == plan.id)
             .order_by(CommercialTariffChange.id)
         )).all())
-        assert len(changes) == 7
+        assert len(changes) == 8
         assert changes[0].action == "create"
         assert changes[-1].after["status"] == "archived"
-    assert "bc:open" in str(dealer_menu_kb(lambda key, **kw: get_text("fa", key, **kw)))
+    assert any(button.callback_data == "cat:open" for row in dealer_menu_kb(lambda key, **kw: get_text("fa", key, **kw)).inline_keyboard for button in row)
 
 
 @pytest.mark.asyncio
