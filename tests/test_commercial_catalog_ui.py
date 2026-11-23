@@ -48,7 +48,7 @@ async def test_dealer_can_create_persian_draft_with_preview_without_invoice(data
     for handler, raw_value in steps:
         text_message.text = raw_value
         await handler(text_message, state, t, seller)
-    assert "۱۷۰" not in text_message.answer.await_args.args[0] or "170٬000" in text_message.answer.await_args.args[0]
+    assert "170٬000" in text_message.answer.await_args.args[0]
     data = await state.get_data()
     callback.data = "cat:save:" + data["catalog_nonce"]
     await ui.catalog_save(callback, state, t, seller)
