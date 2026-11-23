@@ -130,7 +130,7 @@ async def _show_subscription_card(
         traffic=sub.traffic_limit_gb, expire=expire, status=status,
     )
     tariff = PLANS.get(getattr(sub, "plan", None), {})
-    devices = (sub.catalog_snapshot or {}).get("devices") or tariff.get("devices")
+    devices = (getattr(sub, "catalog_snapshot", None) or {}).get("devices") or tariff.get("devices")
     if devices:
         text += t("subscription_devices", devices=devices) + "\n"
     if link:
