@@ -1090,14 +1090,15 @@ async def create_order(
                         CommercialTariff.status == "published",
                     ).with_for_update()
                 )
-                from app.repositories.commercial_catalog_repo import supports_issuance
+                from app.repositories.commercial_catalog_repo import supports_issuance, _allowed_squad
                 from app.services.catalog_pricing import retail_amount
                 from app.repositories.commercial_catalog_repo import provision_plan
                 if (catalog_expected_revision is not None and
                         (isinstance(catalog_expected_revision, bool) or
                          item is None or item.revision != catalog_expected_revision)):
                     raise ValueError("Catalogue price changed before checkout")
-                if item is None or not supports_issuance(item) or plan != provision_plan(item):
+                if (item is None or not supports_issuance(item) or plan != provision_plan(item)
+                        or not await _allowed_squad(session, item.internal_squad_uuid)):
                     raise ValueError("Catalogue selection was changed or disabled")
                 catalog_snapshot = {
                     "sku": item.sku, "title_fa": item.name_fa,
