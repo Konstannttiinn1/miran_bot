@@ -50,6 +50,7 @@ async def init_db() -> None:
             "plan": "VARCHAR(64) NOT NULL DEFAULT ''",
             "status": "VARCHAR(24) NOT NULL DEFAULT 'active'",
         }
+        new_sub_cols["catalog_snapshot"] = "JSON"
         for column, definition in new_sub_cols.items():
             if column not in sub_cols:
                 await conn.execute(text(f"ALTER TABLE subscriptions ADD COLUMN {column} {definition}"))
