@@ -12,6 +12,7 @@ from aiogram.types import InlineKeyboardMarkup
 from app.config import settings
 from app.database.models import utcnow
 from app.handlers.broadcast import clear_broadcast_draft
+from app.handlers.commercial_catalog import clear_catalog_draft
 from app.handlers.states import Purchase
 from app.keyboards.builders import (admin_menu_kb, back_kb, dealer_menu_kb, raw_btn,
                                     language_kb, plans_kb, sub_link_kb)
@@ -36,6 +37,7 @@ EMPTY_KB = InlineKeyboardMarkup(inline_keyboard=[])
 @router.message(CommandStart())
 async def cmd_start(message: types.Message, t, lang, db_user, state: FSMContext):
     await clear_broadcast_draft(state)
+    await clear_catalog_draft(state)
     if message.from_user.id in settings.admin_list:
         await message.answer(
             "👑 Админ-меню:\n🔧 /testvpn | /setdealer | /topup",
