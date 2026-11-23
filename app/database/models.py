@@ -102,6 +102,11 @@ class Order(Base):
     currency: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(default="pending")
     order_type: Mapped[str] = mapped_column(String, default="purchase")  # purchase / renew / traffic_topup
+    # Frozen dealer-controlled retail offer; never reprice pending/paid invoices.
+    catalog_tariff_id: Mapped[int | None] = mapped_column(
+        ForeignKey("commercial_tariffs.id"), nullable=True, index=True,
+    )
+    catalog_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # NULL is a legacy order targeting the user's primary subscription.
     subscription_id: Mapped[int | None] = mapped_column(
         ForeignKey("subscriptions.id"), index=True, nullable=True,
