@@ -14,7 +14,7 @@ from app.handlers.states import Purchase
 from app.keyboards.builders import payment_kb, raw_btn
 from app.middlewares.i18n import I18nMiddleware
 from app.repositories import commercial_catalog_repo as catalog, db_repo
-from app.services.catalog_pricing import plan_code, retail_amount
+from app.services.catalog_pricing import retail_amount
 from app.utils.promo_pricing import discounted_amount, discounted_toman
 from app.utils.menu import send_with_logo
 from app.utils.tariffs import format_toman
@@ -102,7 +102,7 @@ async def choose_offer(callback: types.CallbackQuery, state: FSMContext, t, lang
     if item is None:
         await callback.answer(t("cshop_changed"), show_alert=True)
         return
-    plan = plan_code(item.period_days, item.devices, item.traffic_gb)
+    plan = catalog.provision_plan(item)
     from app.handlers.client import _checkout_promo, _target_caption
     promo = await _checkout_promo(db_user.id, data)
     discount = promo.discount_percent if promo else 0
