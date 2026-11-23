@@ -310,5 +310,12 @@
   "dcat_debit": "💳 Wholesale debit: {amount}\n💼 Balance: {balance}",
   "dcat_retail_not_received": "ℹ️ Retail is an offer price. Actual customer payment has not been recorded.",
   "dcat_already": "This confirmation was already used or has expired.",
-  "dcat_manual_reconcile": "⚠️ Issuance needs administrator reconciliation. Debit was not automatically refunded to avoid double provisioning."
+  "dcat_manual_reconcile": "⚠️ Issuance needs administrator reconciliation. Debit was not automatically refunded to avoid double provisioning.",
+  "catalog_select_squad": "🌐 Choose server group",
+  "catalog_select_squad_help": "Choose an administrator-approved Internal Squad. Existing subscriptions retain their existing server group.",
+  "dcat_received_button": "💵 Record customer payment",
+  "dcat_received_prompt": "Enter the amount actually received from the customer in tomans (whole number). This differs from the advertised retail and dealer wallet debit.",
+  "dcat_received_invalid": "Please enter a valid toman amount.",
+  "dcat_received_done": "✅ Customer payment recorded.",
+  "dcat_received_already": "Cannot record this payment: the sale may not be confirmed or payment was already recorded."
 }
