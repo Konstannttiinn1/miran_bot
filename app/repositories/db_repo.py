@@ -1349,8 +1349,28 @@ async def list_pending_crypto_orders() -> list[Order]:
         return list(result.scalars().all())
 
 
+async def latest_managed_sale_id(dealer_id: int, sub_id: int) -> int | None:
+    """Find latest confirmed managed sale scoped to dealer ownership."""
+    async with async_session_factory() as session:
+        dealer = await session.get(User, dealer_id)
+        if dealer is None or dealer.role != "dealer" or dealer.is_blocked:
+            return None
+        owner = await session.scalar(select(DealerSubscription.id).where(
+            DealerSubscription.id == sub_id,
+            DealerSubscription.dealer_id == dealer_id,
+        ))
+        if owner is None:
+            return None
+        return await session.scalar(select(AnalyticsSale.id).where(
+            AnalyticsSale.dealer_telegram_id == dealer.telegram_id,
+            AnalyticsSale.managed_subscription_id == sub_id,
+            AnalyticsSale.kind == "subscription",
+            AnalyticsSale.actual_received_toman.is_(None),
+        ).order_by(AnalyticsSale.id.desc()).limit(1))
+
+
 async def record_manual_dealer_receipt(
-    dealer_id: int, sub_id: int, received_toman: int,
+    dealer_id: int, sub_id: int, received_toman: int, *, sale_id: int | None = None,
 ) -> bool:
     """Set actual proceeds once for the dealer's most recent confirmed sale.
 
@@ -1372,11 +1392,16 @@ async def record_manual_dealer_receipt(
             ))
             if owned is None:
                 return False
-            sale = await session.scalar(select(AnalyticsSale).where(
+            query = select(AnalyticsSale).where(
                 AnalyticsSale.dealer_telegram_id == dealer.telegram_id,
                 AnalyticsSale.managed_subscription_id == sub_id,
                 AnalyticsSale.kind == "subscription",
-            ).order_by(AnalyticsSale.id.desc()).limit(1).with_for_update())
+            )
+            if sale_id is not None:
+                query = query.where(AnalyticsSale.id == sale_id)
+            sale = await session.scalar(
+                query.order_by(AnalyticsSale.id.desc()).limit(1).with_for_update()
+            )
             if sale is None or sale.actual_received_toman is not None:
                 return False
             sale.actual_received_toman = received_toman
