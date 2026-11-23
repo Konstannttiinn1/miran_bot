@@ -629,6 +629,8 @@ async def reserve_dealer_subscription_renewal(
     sub_id: int,
     plan: str,
     amount: float,
+    *, catalog_tariff_id: int | None = None,
+    catalog_expected_revision: int | None = None,
 ) -> tuple[str, DealerSubscription | None, int | None]:
     """Атомарно резервирует деньги на продление конкретной подписки."""
     if amount <= 0:
@@ -657,6 +659,35 @@ async def reserve_dealer_subscription_renewal(
             ).scalar_one_or_none()
             if dealer is None or dealer.role != "dealer":
                 return "not_dealer", sub, None
+            catalog_snapshot = None
+            if catalog_tariff_id is not None:
+                if not settings.dynamic_catalog_enabled:
+                    return "invalid", sub, None
+                from app.repositories.commercial_catalog_repo import (
+                    provision_plan, supports_issuance, _allowed_squad,
+                )
+                from app.services.catalog_wholesale import wholesale_usd
+                offer = await session.scalar(
+                    select(CommercialTariff).where(
+                        CommercialTariff.id == catalog_tariff_id,
+                        CommercialTariff.status == "published",
+                    ).with_for_update()
+                )
+                if (offer is None or offer.revision != catalog_expected_revision
+                        or not supports_issuance(offer)
+                        or not await _allowed_squad(session, offer.internal_squad_uuid)
+                        or provision_plan(offer) != plan):
+                    return "changed", sub, None
+                amount = wholesale_usd(offer.period_days, offer.devices, offer.traffic_gb)
+                catalog_snapshot = {
+                    "sku": offer.sku, "revision": offer.revision,
+                    "title_fa": offer.name_fa, "title_ru": offer.name_ru,
+                    "title_en": offer.name_en, "period_days": offer.period_days,
+                    "devices": offer.devices, "traffic_gb": offer.traffic_gb,
+                    "internal_squad_uuid": offer.internal_squad_uuid,
+                    "base_retail_toman": offer.retail_toman,
+                    "wholesale_usd": amount,
+                }
             if float(dealer.dealer_balance) < amount:
                 return "insufficient", sub, None
 
@@ -669,6 +700,8 @@ async def reserve_dealer_subscription_renewal(
                     "managed_subscription_id": sub.id,
                     "plan": plan,
                     "amount_usd": amount,
+                    "catalog_tariff_id": catalog_tariff_id,
+                    "catalog_snapshot": catalog_snapshot,
                 },
             )
             session.add(entry)
@@ -709,6 +742,9 @@ async def complete_dealer_subscription_renewal(
             ):
                 return False
             sub.plan = plan
+            if (entry.details or {}).get("catalog_snapshot"):
+                sub.catalog_snapshot = entry.details["catalog_snapshot"]
+                sub.catalog_tariff_id = entry.details.get("catalog_tariff_id")
             sub.expire_at = expire_at
             if traffic_gb is not None:
                 sub.traffic_limit_gb = traffic_gb
