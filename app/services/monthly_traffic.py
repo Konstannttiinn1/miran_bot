@@ -1,7 +1,7 @@
 """Monthly Remnawave quotas and traffic credits valid for one reset cycle.
 
 Remnawave resets usage using MONTH_ROLLING. A durable bonus ledger lets the
-bot restore the 100 GB limit at that reset, rather than renewing paid extras.
+bot restore each user's base GB limit at that reset, rather than renewing paid extras.
 PostgreSQL row locks serialize renewals, credits and background reconciliation.
 """
 import asyncio
@@ -107,17 +107,33 @@ async def _record_limit(session, email: str, limit_bytes: int) -> None:
         )
 
 
-async def grant_monthly(provider, email: str, days: int, limit_ip: int = 1, *, bonus_days: int = 0) -> datetime:
+async def grant_monthly(
+    provider, email: str, days: int, limit_ip: int = 1, *,
+    bonus_days: int = 0, traffic_gb: int = 100,
+    squad_uuid: str | None = None, custom_terms: bool = False,
+) -> datetime:
     """Sell time; an active monthly cycle is never reset by advance renewal."""
     from app.services.remnawave_api import RemnawaveClient
+    from app.config import settings
     if not isinstance(provider, RemnawaveClient):
         raise RuntimeError("Monthly subscriptions require the configured Remnawave provider")
-    if days not in (30, 60, 90):
+    if custom_terms:
+        if not (1 <= days <= 365 and
+                1 <= limit_ip <= min(20, settings.catalog_max_devices) and
+                1 <= traffic_gb <= min(10000, settings.catalog_max_traffic_gb)):
+            raise ValueError("Custom monthly terms exceed the admin limits")
+    elif days not in (30, 60, 90):
         raise ValueError("Unsupported monthly duration")
     if not 0 <= bonus_days <= 365:
         raise ValueError("Invalid promotional bonus days")
-    if limit_ip not in (1, 2, 3):
+    if not custom_terms and limit_ip not in (1, 2, 3):
         raise ValueError("Monthly device limit must be 1, 2 or 3")
+    if not custom_terms and traffic_gb != 100:
+        raise ValueError("Legacy subscriptions use 100 GB")
+    if squad_uuid is not None and (not isinstance(squad_uuid, str) or not squad_uuid.strip()):
+        raise ValueError("Invalid squad selection")
+    if squad_uuid and not custom_terms and squad_uuid != provider.squad_uuid:
+        raise ValueError("Legacy sales cannot override the main squad")
 
     async with _locked(email, create=True) as (session, quota):
         user = await provider.get_client(email)
@@ -131,7 +147,8 @@ async def grant_monthly(provider, email: str, days: int, limit_ip: int = 1, *, b
             quota.extra_bytes = 0
         elif user:
             _sync_cycle(quota, user)
-        limit = BASE_BYTES + quota.extra_bytes
+        base_bytes = int(traffic_gb) * GB
+        limit = base_bytes + quota.extra_bytes
         payload = {
             "expireAt": expires.isoformat() + "Z",
             "trafficLimitBytes": limit,
@@ -156,7 +173,7 @@ async def grant_monthly(provider, email: str, days: int, limit_ip: int = 1, *, b
                 "PATCH", "/api/users", json={"id": provider._user_id(user), **payload},
             )
         else:
-            payload.update(username=email, status="ACTIVE", activeInternalSquads=[provider.squad_uuid])
+            payload.update(username=email, status="ACTIVE", activeInternalSquads=[squad_uuid or provider.squad_uuid])
             if email.isdigit():
                 payload["telegramId"] = int(email)
             updated = await provider._request("POST", "/api/users", json=payload)
@@ -170,7 +187,7 @@ async def grant_monthly(provider, email: str, days: int, limit_ip: int = 1, *, b
             # A native reset may race the renewal PATCH. Do not retain the old
             # bonus under the new cycle timestamp.
             quota.extra_bytes = 0
-            limit = BASE_BYTES
+            limit = base_bytes
             updated = await provider._request("PATCH", "/api/users", json={
                 "id": provider._user_id(updated), "trafficLimitBytes": limit,
                 **_status_patch(updated, limit),
@@ -178,6 +195,7 @@ async def grant_monthly(provider, email: str, days: int, limit_ip: int = 1, *, b
             if not updated.get("shortUuid"):
                 raise RuntimeError("Panel did not confirm the renewed allowance")
         quota.initialized = True
+        quota.base_bytes = base_bytes
         quota.valid_until = expires
         quota.last_reset_at = _marker(updated)
         await _record_limit(session, email, limit)
@@ -194,7 +212,7 @@ async def add_monthly_traffic(provider, email: str, extra_gb: int) -> int | None
             raise RuntimeError("Traffic top-up requires an active subscription")
         _sync_cycle(quota, user)
         quota.extra_bytes += int(extra_gb) * GB
-        limit = BASE_BYTES + quota.extra_bytes
+        limit = int(quota.base_bytes or BASE_BYTES) + quota.extra_bytes
         updated = await provider._request(
             "PATCH", "/api/users", json={
                 "id": provider._user_id(user), "trafficLimitBytes": limit,
@@ -207,7 +225,7 @@ async def add_monthly_traffic(provider, email: str, extra_gb: int) -> int | None
             # The new purchase belongs to the new cycle if reset raced credit.
             quota.extra_bytes = int(extra_gb) * GB
             quota.last_reset_at = _marker(updated)
-            limit = BASE_BYTES + quota.extra_bytes
+            limit = int(quota.base_bytes or BASE_BYTES) + quota.extra_bytes
             updated = await provider._request("PATCH", "/api/users", json={
                 "id": provider._user_id(updated), "trafficLimitBytes": limit,
                 **_status_patch(updated, limit),
@@ -230,13 +248,13 @@ async def reconcile_one(provider, email: str) -> None:
             return
         updated = await provider._request(
             "PATCH", "/api/users", json={
-                "id": provider._user_id(user), "trafficLimitBytes": BASE_BYTES,
+                "id": provider._user_id(user), "trafficLimitBytes": int(quota.base_bytes or BASE_BYTES),
                 **_status_patch(user, BASE_BYTES),
             },
         )
         if not updated.get("shortUuid"):
             raise RuntimeError("Panel did not confirm monthly bonus expiry")
-        await _record_limit(session, email, BASE_BYTES)
+        await _record_limit(session, email, int(quota.base_bytes or BASE_BYTES))
 
 
 async def reconcile_monthly_traffic() -> None:
