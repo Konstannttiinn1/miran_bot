@@ -4,6 +4,7 @@ from html import escape as h
 
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from app.bot import bot
 from app.config import settings
@@ -144,6 +145,56 @@ async def _show_subscription_card(
         text,
         reply_markup=dealer_subscription_card_kb(sub.id, page, link, t=t),
     )
+
+
+class DealerIncome(StatesGroup):
+    value = State()
+
+
+@router.callback_query(F.data.startswith("dealer:income:"))
+async def manual_receipt_prompt(callback: types.CallbackQuery, t, db_user, state: FSMContext):
+    if not await _dealer_only(callback, db_user, t):
+        return
+    try:
+        _, _, raw_id, raw_page = callback.data.split(":")
+        sub_id, page = int(raw_id), int(raw_page)
+    except (TypeError, ValueError):
+        await callback.answer(t("dealer_action_failed"), show_alert=True)
+        return
+    sub = await db_repo.get_dealer_subscription(db_user.id, sub_id)
+    if sub is None:
+        await callback.answer(t("subscription_not_found"), show_alert=True)
+        return
+    await state.set_state(DealerIncome.value)
+    await state.set_data({"manual_income_sub": sub_id, "manual_income_page": page})
+    await callback.answer()
+    await send_with_logo(
+        callback, t("dcat_received_prompt"),
+        reply_markup=back_kb(t, f"dealer:sub:{sub_id}:{page}"),
+    )
+
+
+@router.message(DealerIncome.value)
+async def manual_receipt_save(message: types.Message, t, db_user, state: FSMContext):
+    if db_user.role != "dealer" or db_user.is_blocked:
+        return
+    data = await state.get_data()
+    sub_id = data.get("manual_income_sub")
+    if not isinstance(sub_id, int):
+        await state.clear()
+        await message.answer(t("dealer_action_failed"))
+        return
+    normalized = (message.text or "").strip().replace("٬", "").replace(",", "").replace(" ", "")
+    if not normalized.isdecimal():
+        await message.answer(t("dcat_received_invalid"))
+        return
+    received = int(normalized)
+    if not 0 <= received <= 1_000_000_000_000:
+        await message.answer(t("dcat_received_invalid"))
+        return
+    ok = await db_repo.record_manual_dealer_receipt(db_user.id, sub_id, received)
+    await state.clear()
+    await message.answer(t("dcat_received_done") if ok else t("dcat_received_already"))
 
 
 @router.callback_query(F.data == "dealer:balance")
