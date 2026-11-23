@@ -302,5 +302,13 @@
   "cshop_unavailable": "This checkout is no longer valid. Open the store again from the main menu.",
   "cshop_changed": "This plan has changed or is no longer on sale. Please choose again.",
   "cshop_summary": "<b>📦 {name}</b>\n⏳ {days} days · 📱 {devices} devices\n📊 {traffic} GB per 30 days\n💰 Retail price: {price}",
-  "cshop_invoice": "Orion subscription · {name}"
+  "cshop_invoice": "Orion subscription · {name}",
+  "dcat_unavailable": "Dealer catalogue issuance is unavailable.",
+  "dcat_offer_intro": "<b>📦 Dealer offers</b>\nCustomer retail price and wholesale debit are shown separately. Actual customer payment is not assumed.",
+  "dcat_buy_review": "<b>🛒 Review manual subscription purchase</b>",
+  "dcat_renew_review": "<b>📅 Review renewal #{id}</b>\nExisting subscription server group is not changed by renewal.",
+  "dcat_debit": "💳 Wholesale debit: {amount}\n💼 Balance: {balance}",
+  "dcat_retail_not_received": "ℹ️ Retail is an offer price. Actual customer payment has not been recorded.",
+  "dcat_already": "This confirmation was already used or has expired.",
+  "dcat_manual_reconcile": "⚠️ Issuance needs administrator reconciliation. Debit was not automatically refunded to avoid double provisioning."
 }
