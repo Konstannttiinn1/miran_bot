@@ -10,7 +10,7 @@ from app.config import settings
 from app.handlers.states import Purchase
 from app.keyboards.builders import back_kb, customer_cabinet_kb, dealer_confirm_kb, devices_kb, payment_kb, plans_kb
 from app.middlewares.i18n import I18nMiddleware, get_text
-from app.repositories import db_repo, dealer_tools_repo, customer_subscriptions_repo
+from app.repositories import db_repo, dealer_tools_repo, customer_subscriptions_repo, commercial_catalog_repo as catalog_repo
 from app.repositories.customer_subscriptions_repo import SubscriptionLimitReached
 from app.services import heleket
 from app.services.vpn_provider import provider_name
@@ -157,6 +157,9 @@ async def choose_plan(callback: types.CallbackQuery, t, lang, db_user, state: FS
         await callback.answer(strip_custom_emoji_tags(t("traffic_requires_subscription")), show_alert=True)
         return
     if get_tariff(plan).get("monthly"):
+        if settings.dynamic_catalog_enabled:
+            await callback.answer(strip_custom_emoji_tags(t("cshop_unavailable")), show_alert=True)
+            return
         promo = await db_repo.get_active_purchase_promo(db_user.id)
         await state.update_data(plan=None, order_id=None)
         await state.set_state(Purchase.choosing_devices)
@@ -216,6 +219,21 @@ async def _show_checkout(target, t, lang, db_user, state: FSMContext) -> None:
         return
     promo = await _checkout_promo(db_user.id, data)
     percent = promo.discount_percent if promo else 0
+    if data.get("catalog_tariff_id") is not None:
+        from app.handlers.commercial_checkout import offer_price
+        item = await catalog_repo.get_published(data["catalog_tariff_id"])
+        if item is None or plan != catalog_repo.provision_plan(item):
+            await send_with_logo(target, t("cshop_changed"), reply_markup=back_kb(t, "cshop:list"))
+            return
+        price = offer_price(item, lang, percent)
+        caption = t("cshop_summary", name=h(catalog_repo.title(item, lang)),
+                    days=item.period_days, devices=item.devices,
+                    traffic=item.traffic_gb, price=price)
+        notice = get_promo_notice(t, promo)
+        content = await _target_caption(t, db_user.id, data)
+        text = content + "\n\n" + ((notice + "\n\n") if notice else "") + caption + "\n\n" + t("select_payment")
+        await send_with_logo(target, text, reply_markup=payment_kb(t, "cshop:list", allow_promo=True))
+        return
     price = get_promo_price_display(plan, lang, percent, markup=True)
     notice = get_promo_notice(t, promo)
     back_callback = f"plan:{get_period_plan(plan)}"
@@ -231,7 +249,7 @@ async def _show_checkout(target, t, lang, db_user, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("device:"))
 async def choose_devices(callback: types.CallbackQuery, t, lang, db_user, state: FSMContext):
     plan = callback.data.split(":")[1]
-    if plan not in PLANS or not PLANS[plan].get("monthly"):
+    if plan not in PLANS or not PLANS[plan].get("monthly") or settings.dynamic_catalog_enabled:
         await callback.answer(strip_custom_emoji_tags(t("invalid_plan")), show_alert=True)
         return
     await state.update_data(plan=plan, order_id=None)
@@ -280,9 +298,13 @@ async def back_to_plans(callback: types.CallbackQuery, t, lang, db_user, state: 
         bool(data.get("plans_with_test", False))
         and await db_repo.can_claim_test(db_user.id)
     )
-    await state.update_data(plans_with_test=with_test, plan=None, order_id=None)
+    await state.update_data(plans_with_test=with_test, plan=None, order_id=None, catalog_tariff_id=None)
     await state.set_state(Purchase.choosing_plan)
     await callback.answer()
+    if settings.dynamic_catalog_enabled:
+        from app.handlers.commercial_checkout import show_offers
+        await show_offers(callback, t, lang, db_user.id)
+        return
     promo = await db_repo.get_active_purchase_promo(db_user.id)
     await send_with_logo(
         callback,
@@ -314,11 +336,23 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
         await state.clear()
         await send_with_logo(callback, t("traffic_requires_subscription"))
         return
+    catalog_id = data.get("catalog_tariff_id")
+    if plan != TRAFFIC_TOPUP and settings.dynamic_catalog_enabled and catalog_id is None:
+        await send_with_logo(callback, t("cshop_unavailable"), reply_markup=back_kb(t, "cshop:list"))
+        return
+    if catalog_id is not None:
+        item = await catalog_repo.get_published(catalog_id)
+        if item is None or plan != catalog_repo.provision_plan(item):
+            await send_with_logo(callback, t("cshop_changed"), reply_markup=back_kb(t, "cshop:list"))
+            return
+    else:
+        item = None
     order_type = "traffic_topup" if plan == TRAFFIC_TOPUP else "purchase"
     if get_tariff(plan).get("monthly") and provider_name() != "remnawave":
         await send_with_logo(callback, t("sales_unavailable"))
         return
     back_callback = (
+        "cshop:list" if catalog_id is not None else
         f"plan:{get_period_plan(plan)}" if get_tariff(plan).get("monthly")
         else (
             f"cust:card:{data['subscription_id']}"
@@ -329,6 +363,8 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
         "subscription_id": data.get("subscription_id"),
         "new_subscription": data.get("purchase_mode") == "new",
         "promo_code": data.get("checkout_promo_code"),
+        "catalog_tariff_id": catalog_id,
+        "catalog_expected_revision": data.get("catalog_revision"),
     }
 
     async def create_checkout_order(amount, currency, **extras):
@@ -353,6 +389,15 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
         await state.clear()
         stars = int(order.amount)
         title, description, label = _invoice_copy(lang, plan, stars)
+        if order.catalog_snapshot:
+            name = (order.catalog_snapshot.get(f"title_{lang}")
+                    or order.catalog_snapshot.get("title_fa") or "")
+            title = t("cshop_invoice", name=name)[:32]
+            description = t("cshop_summary", name=name,
+                days=order.catalog_snapshot["period_days"],
+                devices=order.catalog_snapshot["devices"],
+                traffic=order.catalog_snapshot["traffic_gb"],
+                price=str(stars) + " XTR")[:255]
         try:
             await callback.message.answer_invoice(
                 title=title,
@@ -368,7 +413,7 @@ async def choose_payment(callback: types.CallbackQuery, t, lang, db_user, state:
         return
 
     if method == "dealer":
-        retail_toman = get_toman_price(plan)
+        retail_toman = item.retail_toman if item is not None else get_toman_price(plan)
         dealer_usd = get_dealer_debit_usd(
             plan,
             settings.toman_per_usd,

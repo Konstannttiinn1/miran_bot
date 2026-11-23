@@ -296,5 +296,11 @@
   "catalog_cancel": "❌ Cancel",
   "catalog_canceled": "Plan creation cancelled.",
   "catalog_page": "Next page",
-  "catalog_server_locked": "🌐 Servers: Orion main group (admin controlled)"
+  "catalog_server_locked": "🌐 Servers: Orion main group (admin controlled)",
+  "cshop_intro": "<b>🛒 Orion plans</b>\n{count} plans are available. Choose a plan:",
+  "cshop_empty": "The new store has no published plans yet. Please contact support.",
+  "cshop_unavailable": "This checkout is no longer valid. Open the store again from the main menu.",
+  "cshop_changed": "This plan has changed or is no longer on sale. Please choose again.",
+  "cshop_summary": "<b>📦 {name}</b>\n⏳ {days} days · 📱 {devices} devices\n📊 {traffic} GB per 30 days\n💰 Retail price: {price}",
+  "cshop_invoice": "Orion subscription · {name}"
 }
