@@ -145,8 +145,9 @@ async def show_card(callback, t, db_user, sub_id: int) -> None:
         expire=sub.expire_at.strftime("%d.%m.%Y") if sub.status != "pending" else "—",
         traffic=sub.traffic_limit_gb, id=sub.id,
     )
-    if tariff.get("devices"):
-        description += "\n" + t("subscription_devices", devices=tariff["devices"])
+    devices = (sub.catalog_snapshot or {}).get("devices") or tariff.get("devices")
+    if devices:
+        description += "\n" + t("subscription_devices", devices=devices)
     description += await _live_usage(t, sub)
     await callback.answer()
     await send_with_logo(

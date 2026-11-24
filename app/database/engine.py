@@ -14,6 +14,39 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Catalogue extensions are additive. Pre-existing monthly clients keep
+        # their original 100 GB rolling allowance.
+        quota_cols = await conn.run_sync(
+            lambda sync: {column["name"] for column in inspect(sync).get_columns("monthly_traffic_quotas")}
+        )
+        if "base_bytes" not in quota_cols:
+            await conn.execute(text(
+                "ALTER TABLE monthly_traffic_quotas ADD COLUMN base_bytes BIGINT "
+                "NOT NULL DEFAULT 107374182400"
+            ))
+        managed_cols = await conn.run_sync(
+            lambda sync: {column["name"] for column in inspect(sync).get_columns("dealer_subscriptions")}
+        )
+        if "request_key" not in managed_cols:
+            await conn.execute(text(
+                "ALTER TABLE dealer_subscriptions ADD COLUMN request_key VARCHAR(64)"
+            ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_dealer_subscriptions_request_key "
+            "ON dealer_subscriptions(request_key)"
+        ))
+        if "catalog_tariff_id" not in managed_cols:
+            await conn.execute(text(
+                "ALTER TABLE dealer_subscriptions ADD COLUMN catalog_tariff_id INTEGER"
+            ))
+        if "catalog_snapshot" not in managed_cols:
+            await conn.execute(text(
+                "ALTER TABLE dealer_subscriptions ADD COLUMN catalog_snapshot JSON"
+            ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_dealer_subscriptions_catalog_tariff_id "
+            "ON dealer_subscriptions(catalog_tariff_id)"
+        ))
         # Existing single-subscription installations need a safe, additive migration.
         # We do not modify existing rows' xui_email, expiration or quota.
         sub_cols = await conn.run_sync(
@@ -25,6 +58,7 @@ async def init_db() -> None:
             "plan": "VARCHAR(64) NOT NULL DEFAULT ''",
             "status": "VARCHAR(24) NOT NULL DEFAULT 'active'",
         }
+        new_sub_cols["catalog_snapshot"] = "JSON"
         for column, definition in new_sub_cols.items():
             if column not in sub_cols:
                 await conn.execute(text(f"ALTER TABLE subscriptions ADD COLUMN {column} {definition}"))
@@ -92,6 +126,10 @@ async def init_db() -> None:
         if "catalog_revision" not in sale_cols:
             await conn.execute(text(
                 "ALTER TABLE analytics_sales ADD COLUMN catalog_revision INTEGER"
+            ))
+        if "actual_received_toman" not in sale_cols:
+            await conn.execute(text(
+                "ALTER TABLE analytics_sales ADD COLUMN actual_received_toman BIGINT"
             ))
         if "catalog_title_fa" not in sale_cols:
             await conn.execute(text(

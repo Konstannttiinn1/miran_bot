@@ -6,13 +6,14 @@ No panel calls or financial mutations are performed here.
 from __future__ import annotations
 
 from secrets import token_hex
+from uuid import UUID
 
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.config import settings
-from app.database.models import CommercialTariff, CommercialTariffChange, User, utcnow
+from app.database.models import CommercialTariff, CommercialTariffChange, CommercialInternalSquad, User, utcnow
 from app.repositories import db_repo
 from app.utils.tariffs import PLANS, get_toman_price
 
@@ -30,7 +31,7 @@ class CatalogInvalid(ValueError):
 
 
 STATUSES = ("draft", "published", "paused", "archived")
-EDITABLE = {"name_fa", "period_days", "devices", "traffic_gb", "retail_toman"}
+EDITABLE = {"name_fa", "period_days", "devices", "traffic_gb", "retail_toman", "internal_squad_uuid"}
 
 
 def _valid_name(value: object) -> str:
@@ -49,6 +50,10 @@ def _validate_fields(changes: dict) -> dict:
     for key, value in changes.items():
         if key == "name_fa":
             result[key] = _valid_name(value)
+        elif key == "internal_squad_uuid":
+            if not isinstance(value, str) or not value.strip():
+                raise CatalogInvalid("Internal squad UUID is required")
+            result[key] = value.strip()
         else:
             if not isinstance(value, int) or isinstance(value, bool):
                 raise CatalogInvalid("Whole positive numbers are required")
@@ -69,13 +74,25 @@ def supports_issuance(tariff: CommercialTariff) -> bool:
 
     This does NOT activate retail checkout. Phase 2 must implement quote snapshots.
     """
+    if not settings.remnawave_squad_uuid.strip() or tariff.retail_toman <= 0:
+        return False
+    from app.services.catalog_wholesale import minimum_toman
+    if tariff.retail_toman < minimum_toman(
+        tariff.period_days, tariff.devices, tariff.traffic_gb,
+    ):
+        return False
+    if settings.catalog_custom_issuance_enabled:
+        return (
+            1 <= tariff.period_days <= 365
+            and 1 <= tariff.devices <= min(20, settings.catalog_max_devices)
+            and 1 <= tariff.traffic_gb <= min(10000, settings.catalog_max_traffic_gb)
+            and bool(tariff.internal_squad_uuid)
+        )
     return (
         tariff.period_days in (30, 60, 90)
         and tariff.devices in (1, 2, 3)
         and tariff.traffic_gb == 100
-        and bool(settings.remnawave_squad_uuid.strip())
         and tariff.internal_squad_uuid == settings.remnawave_squad_uuid.strip()
-        and tariff.retail_toman > 0
     )
 
 
@@ -90,6 +107,59 @@ def _snapshot(t: CommercialTariff) -> dict:
         "status": t.status,
         "revision": t.revision,
     }
+
+
+async def _allowed_squad(session, uuid: str) -> bool:
+    if uuid == settings.remnawave_squad_uuid.strip() and bool(uuid):
+        return True
+    return bool(await session.scalar(
+        select(CommercialInternalSquad.uuid).where(
+            CommercialInternalSquad.uuid == uuid,
+            CommercialInternalSquad.enabled.is_(True),
+        )
+    ))
+
+
+async def available_squads(actor_tg: int) -> list[tuple[str, str]]:
+    async with db_repo.async_session_factory() as session:
+        await _check_actor(session, actor_tg)
+        squads = []
+        default = settings.remnawave_squad_uuid.strip()
+        if default:
+            squads.append((default, "Orion · Main"))
+        rows = await session.scalars(
+            select(CommercialInternalSquad)
+            .where(CommercialInternalSquad.enabled.is_(True))
+            .order_by(CommercialInternalSquad.label)
+        )
+        squads.extend((item.uuid, item.label) for item in rows.all() if item.uuid != default)
+        return squads
+
+
+async def upsert_allowed_squad(actor_tg: int, uuid: str, label: str, enabled: bool = True):
+    """Only an admin can change the allowlist; panel objects are never modified."""
+    try:
+        uuid = str(UUID(uuid))
+    except (ValueError, TypeError):
+        raise CatalogInvalid("Expected a Remnawave internal squad UUID")
+    label = _valid_name(label)
+    if not isinstance(enabled, bool):
+        raise CatalogInvalid("enabled must be boolean")
+    if uuid == settings.remnawave_squad_uuid.strip() and not enabled:
+        raise CatalogInvalid("Configured main squad cannot be disabled")
+    async with db_repo.async_session_factory() as session:
+        async with session.begin():
+            await _check_actor(session, actor_tg)
+            if actor_tg not in settings.admin_list:
+                raise CatalogDenied("Only the administrator can whitelist an internal squad")
+            existing = await session.get(CommercialInternalSquad, uuid)
+            if existing is None:
+                session.add(CommercialInternalSquad(
+                    uuid=uuid, label=label, enabled=enabled, created_by_tg=actor_tg,
+                ))
+            else:
+                existing.label = label
+                existing.enabled = enabled
 
 
 async def _check_actor(session, actor_tg: int) -> None:
@@ -200,6 +270,20 @@ async def update_tariff(
                 raise CatalogInvalid("Only a paused product can be resumed")
             if action in {"publish", "resume"} and not supports_issuance(item):
                 raise CatalogInvalid("This product cannot be published until issuance supports its parameters")
+            if ("internal_squad_uuid" in changes
+                and not await _allowed_squad(session, changes["internal_squad_uuid"])):
+                raise CatalogInvalid("Squad is not approved for commercial use")
+            if action in {"publish", "resume"} and not await _allowed_squad(session, item.internal_squad_uuid):
+                raise CatalogInvalid("The selected squad is disabled or missing")
+            if (action in {"publish", "resume"} or "retail_toman" in changes):
+                from app.services.catalog_wholesale import minimum_toman
+                price = changes.get("retail_toman", item.retail_toman)
+                if price < minimum_toman(
+                    changes.get("period_days", item.period_days),
+                    changes.get("devices", item.devices),
+                    changes.get("traffic_gb", item.traffic_gb),
+                ):
+                    raise CatalogInvalid("Retail must cover the admin-defined dealer wholesale cost")
             before = _snapshot(item)
             changed = await session.execute(
                 update(CommercialTariff)
@@ -282,6 +366,9 @@ def provision_plan(item: CommercialTariff) -> str:
     if not supports_issuance(item):
         raise CatalogInvalid("Tariff does not match the supported Remnawave profile")
     from app.services.catalog_pricing import plan_code
+    if settings.catalog_custom_issuance_enabled:
+        # Mutable free-form SKUs are not used: the order keeps a full snapshot.
+        return "cat_" + str(item.id)
     return plan_code(item.period_days, item.devices, item.traffic_gb)
 
 
@@ -296,7 +383,9 @@ async def list_published(*, limit: int = 30) -> list[CommercialTariff]:
             .order_by(CommercialTariff.sort_order, CommercialTariff.id)
             .limit(max(1, min(limit, 100)))
         )
-        return [item for item in rows.all() if supports_issuance(item)]
+        return [item for item in rows.all()
+                if supports_issuance(item)
+                and await _allowed_squad(session, item.internal_squad_uuid)]
 
 
 async def get_published(tariff_id: int) -> CommercialTariff | None:
@@ -304,7 +393,8 @@ async def get_published(tariff_id: int) -> CommercialTariff | None:
         return None
     async with db_repo.async_session_factory() as session:
         item = await session.get(CommercialTariff, tariff_id)
-        if item is None or item.status != "published" or not supports_issuance(item):
+        if (item is None or item.status != "published" or not supports_issuance(item)
+                or not await _allowed_squad(session, item.internal_squad_uuid)):
             return None
         return item
 

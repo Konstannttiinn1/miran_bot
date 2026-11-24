@@ -4,6 +4,7 @@ on:
     branches:
       - feat/dealer-catalog-phase1-20261124
       - feat/dealer-catalog-phase2-checkout-20261124
+      - feat/dealer-catalog-phase3-issuance-20261124
   pull_request:
     branches:
       - feat/manual-broadcasts-20261119

@@ -57,7 +57,7 @@ async def rename_subscription(user_id: int, sub_id: int, new_label: str) -> bool
 
 async def update_subscription(user_id: int, sub_id: int, **fields) -> bool:
     """Update only the requested customer's chosen VPN, never another slot."""
-    allowed = {"expire_at", "traffic_limit_gb", "plan", "status", "notified_3d", "notified_1d"}
+    allowed = {"expire_at", "traffic_limit_gb", "plan", "catalog_snapshot", "status", "notified_3d", "notified_1d"}
     if set(fields) - allowed:
         raise ValueError("Unsupported subscription update")
     async with async_session_factory() as session:

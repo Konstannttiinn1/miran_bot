@@ -9,6 +9,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from app.database.engine import async_session_factory
 from app.database.models import (
     CommercialTariff,
+    AnalyticsSale,
     DealerLog,
     DealerSubscription,
     DealerTest,
@@ -380,6 +381,9 @@ async def reserve_dealer_subscription_purchase(
     dealer_id: int,
     plan: str,
     amount: float,
+    *, catalog_tariff_id: int | None = None,
+    catalog_expected_revision: int | None = None,
+    request_key: str | None = None,
 ) -> tuple[str, DealerSubscription | None]:
     """Списывает дилерскую цену и создаёт pending-запись отдельной подписки."""
     if amount <= 0:
@@ -394,6 +398,46 @@ async def reserve_dealer_subscription_purchase(
             ).scalar_one_or_none()
             if dealer is None or dealer.role != "dealer":
                 return "not_dealer", None
+            if request_key:
+                if not isinstance(request_key, str) or len(request_key) > 64:
+                    return "invalid", None
+                existing = await session.scalar(
+                    select(DealerSubscription).where(
+                        DealerSubscription.dealer_id == dealer_id,
+                        DealerSubscription.request_key == request_key,
+                    )
+                )
+                if existing is not None:
+                    return "duplicate", existing
+            catalog_snapshot = None
+            if catalog_tariff_id is not None:
+                if not settings.dynamic_catalog_enabled:
+                    return "invalid", None
+                from app.repositories.commercial_catalog_repo import (
+                    provision_plan, supports_issuance, _allowed_squad,
+                )
+                from app.services.catalog_wholesale import wholesale_usd
+                offer = await session.scalar(
+                    select(CommercialTariff).where(
+                        CommercialTariff.id == catalog_tariff_id,
+                        CommercialTariff.status == "published",
+                    ).with_for_update()
+                )
+                if (offer is None or offer.revision != catalog_expected_revision
+                        or not supports_issuance(offer)
+                        or not await _allowed_squad(session, offer.internal_squad_uuid)
+                        or provision_plan(offer) != plan):
+                    return "changed", None
+                amount = wholesale_usd(offer.period_days, offer.devices, offer.traffic_gb)
+                catalog_snapshot = {
+                    "sku": offer.sku, "revision": offer.revision,
+                    "title_fa": offer.name_fa, "title_ru": offer.name_ru,
+                    "title_en": offer.name_en, "period_days": offer.period_days,
+                    "devices": offer.devices, "traffic_gb": offer.traffic_gb,
+                    "internal_squad_uuid": offer.internal_squad_uuid,
+                    "base_retail_toman": offer.retail_toman,
+                    "wholesale_usd": amount,
+                }
             if float(dealer.dealer_balance) < amount:
                 return "insufficient", None
 
@@ -406,6 +450,9 @@ async def reserve_dealer_subscription_purchase(
                 traffic_limit_gb=0,
                 status="pending",
                 price_paid_usd=amount,
+                catalog_tariff_id=catalog_tariff_id,
+                catalog_snapshot=catalog_snapshot,
+                request_key=request_key,
             )
             session.add(sub)
             await session.flush()
@@ -596,6 +643,8 @@ async def reserve_dealer_subscription_renewal(
     sub_id: int,
     plan: str,
     amount: float,
+    *, catalog_tariff_id: int | None = None,
+    catalog_expected_revision: int | None = None,
 ) -> tuple[str, DealerSubscription | None, int | None]:
     """Атомарно резервирует деньги на продление конкретной подписки."""
     if amount <= 0:
@@ -624,6 +673,35 @@ async def reserve_dealer_subscription_renewal(
             ).scalar_one_or_none()
             if dealer is None or dealer.role != "dealer":
                 return "not_dealer", sub, None
+            catalog_snapshot = None
+            if catalog_tariff_id is not None:
+                if not settings.dynamic_catalog_enabled:
+                    return "invalid", sub, None
+                from app.repositories.commercial_catalog_repo import (
+                    provision_plan, supports_issuance, _allowed_squad,
+                )
+                from app.services.catalog_wholesale import wholesale_usd
+                offer = await session.scalar(
+                    select(CommercialTariff).where(
+                        CommercialTariff.id == catalog_tariff_id,
+                        CommercialTariff.status == "published",
+                    ).with_for_update()
+                )
+                if (offer is None or offer.revision != catalog_expected_revision
+                        or not supports_issuance(offer)
+                        or not await _allowed_squad(session, offer.internal_squad_uuid)
+                        or provision_plan(offer) != plan):
+                    return "changed", sub, None
+                amount = wholesale_usd(offer.period_days, offer.devices, offer.traffic_gb)
+                catalog_snapshot = {
+                    "sku": offer.sku, "revision": offer.revision,
+                    "title_fa": offer.name_fa, "title_ru": offer.name_ru,
+                    "title_en": offer.name_en, "period_days": offer.period_days,
+                    "devices": offer.devices, "traffic_gb": offer.traffic_gb,
+                    "internal_squad_uuid": offer.internal_squad_uuid,
+                    "base_retail_toman": offer.retail_toman,
+                    "wholesale_usd": amount,
+                }
             if float(dealer.dealer_balance) < amount:
                 return "insufficient", sub, None
 
@@ -636,6 +714,8 @@ async def reserve_dealer_subscription_renewal(
                     "managed_subscription_id": sub.id,
                     "plan": plan,
                     "amount_usd": amount,
+                    "catalog_tariff_id": catalog_tariff_id,
+                    "catalog_snapshot": catalog_snapshot,
                 },
             )
             session.add(entry)
@@ -676,6 +756,9 @@ async def complete_dealer_subscription_renewal(
             ):
                 return False
             sub.plan = plan
+            if (entry.details or {}).get("catalog_snapshot"):
+                sub.catalog_snapshot = entry.details["catalog_snapshot"]
+                sub.catalog_tariff_id = entry.details.get("catalog_tariff_id")
             sub.expire_at = expire_at
             if traffic_gb is not None:
                 sub.traffic_limit_gb = traffic_gb
@@ -1007,15 +1090,15 @@ async def create_order(
                         CommercialTariff.status == "published",
                     ).with_for_update()
                 )
-                from app.repositories.commercial_catalog_repo import supports_issuance
-                from app.services.catalog_pricing import plan_code, retail_amount
+                from app.repositories.commercial_catalog_repo import supports_issuance, _allowed_squad
+                from app.services.catalog_pricing import retail_amount
+                from app.repositories.commercial_catalog_repo import provision_plan
                 if (catalog_expected_revision is not None and
                         (isinstance(catalog_expected_revision, bool) or
                          item is None or item.revision != catalog_expected_revision)):
                     raise ValueError("Catalogue price changed before checkout")
-                if item is None or not supports_issuance(item) or plan != plan_code(
-                    item.period_days, item.devices, item.traffic_gb
-                ):
+                if (item is None or not supports_issuance(item) or plan != provision_plan(item)
+                        or not await _allowed_squad(session, item.internal_squad_uuid)):
                     raise ValueError("Catalogue selection was changed or disabled")
                 catalog_snapshot = {
                     "sku": item.sku, "title_fa": item.name_fa,
@@ -1264,3 +1347,67 @@ async def list_pending_crypto_orders() -> list[Order]:
             )
         )
         return list(result.scalars().all())
+
+
+async def latest_managed_sale_id(dealer_id: int, sub_id: int) -> int | None:
+    """Find latest confirmed managed sale scoped to dealer ownership."""
+    async with async_session_factory() as session:
+        dealer = await session.get(User, dealer_id)
+        if dealer is None or dealer.role != "dealer" or dealer.is_blocked:
+            return None
+        owner = await session.scalar(select(DealerSubscription.id).where(
+            DealerSubscription.id == sub_id,
+            DealerSubscription.dealer_id == dealer_id,
+        ))
+        if owner is None:
+            return None
+        return await session.scalar(select(AnalyticsSale.id).where(
+            AnalyticsSale.dealer_telegram_id == dealer.telegram_id,
+            AnalyticsSale.managed_subscription_id == sub_id,
+            AnalyticsSale.kind == "subscription",
+            AnalyticsSale.actual_received_toman.is_(None),
+        ).order_by(AnalyticsSale.id.desc()).limit(1))
+
+
+async def record_manual_dealer_receipt(
+    dealer_id: int, sub_id: int, received_toman: int, *, sale_id: int | None = None,
+) -> bool:
+    """Set actual proceeds once for the dealer's most recent confirmed sale.
+
+    The offered retail_toman and USD cost remain immutable. Subsequent changes
+    require explicit administrator reconciliation, not dealer overwrites.
+    """
+    if (not isinstance(received_toman, int) or isinstance(received_toman, bool)
+            or not 0 <= received_toman <= 1_000_000_000_000):
+        raise ValueError("Invalid customer payment amount")
+    async with async_session_factory() as session:
+        async with session.begin():
+            dealer = await session.get(User, dealer_id)
+            if dealer is None or dealer.role != "dealer" or dealer.is_blocked:
+                return False
+            owned = await session.scalar(select(DealerSubscription.id).where(
+                DealerSubscription.id == sub_id,
+                DealerSubscription.dealer_id == dealer_id,
+                DealerSubscription.status != "failed",
+            ))
+            if owned is None:
+                return False
+            query = select(AnalyticsSale).where(
+                AnalyticsSale.dealer_telegram_id == dealer.telegram_id,
+                AnalyticsSale.managed_subscription_id == sub_id,
+                AnalyticsSale.kind == "subscription",
+            )
+            if sale_id is not None:
+                query = query.where(AnalyticsSale.id == sale_id)
+            sale = await session.scalar(
+                query.order_by(AnalyticsSale.id.desc()).limit(1).with_for_update()
+            )
+            if sale is None or sale.actual_received_toman is not None:
+                return False
+            sale.actual_received_toman = received_toman
+            session.add(DealerLog(
+                dealer_id=dealer_id, action="dealer_manual_receipt_recorded",
+                details={"sale_id": sale.id, "managed_subscription_id": sub_id,
+                         "actual_received_toman": received_toman},
+            ))
+            return True

@@ -59,6 +59,10 @@ class Settings(BaseSettings):
 
     # New database-backed storefront. Leave OFF until all payment paths are verified.
     dynamic_catalog_enabled: bool = False
+    # Custom limits and Internal Squads must be explicitly approved before sales.
+    catalog_custom_issuance_enabled: bool = False
+    catalog_max_devices: int = 10
+    catalog_max_traffic_gb: int = 1000
 
     # Max extra personal subscriptions beyond the existing primary VPN.
     max_additional_subscriptions: int = 10

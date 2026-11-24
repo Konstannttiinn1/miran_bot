@@ -4,6 +4,7 @@ from html import escape as h
 
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from app.bot import bot
 from app.config import settings
@@ -129,8 +130,9 @@ async def _show_subscription_card(
         traffic=sub.traffic_limit_gb, expire=expire, status=status,
     )
     tariff = PLANS.get(getattr(sub, "plan", None), {})
-    if tariff.get("monthly"):
-        text += t("subscription_devices", devices=tariff["devices"]) + "\n"
+    devices = (getattr(sub, "catalog_snapshot", None) or {}).get("devices") or tariff.get("devices")
+    if devices:
+        text += t("subscription_devices", devices=devices) + "\n"
     if link:
         text += f"\n🔗 <code>{h(link)}</code>"
     else:
@@ -143,6 +145,63 @@ async def _show_subscription_card(
         text,
         reply_markup=dealer_subscription_card_kb(sub.id, page, link, t=t),
     )
+
+
+class DealerIncome(StatesGroup):
+    value = State()
+
+
+@router.callback_query(F.data.startswith("dealer:income:"))
+async def manual_receipt_prompt(callback: types.CallbackQuery, t, db_user, state: FSMContext):
+    if not await _dealer_only(callback, db_user, t):
+        return
+    try:
+        _, _, raw_id, raw_page = callback.data.split(":")
+        sub_id, page = int(raw_id), int(raw_page)
+    except (TypeError, ValueError):
+        await callback.answer(t("dealer_action_failed"), show_alert=True)
+        return
+    sub = await db_repo.get_dealer_subscription(db_user.id, sub_id)
+    if sub is None:
+        await callback.answer(t("subscription_not_found"), show_alert=True)
+        return
+    sale_id = await db_repo.latest_managed_sale_id(db_user.id, sub_id)
+    if sale_id is None:
+        await callback.answer(t("dcat_received_already"), show_alert=True)
+        return
+    await state.set_state(DealerIncome.value)
+    await state.set_data({"manual_income_sub": sub_id, "manual_income_sale": sale_id,
+                          "manual_income_page": page})
+    await callback.answer()
+    await send_with_logo(
+        callback, t("dcat_received_prompt"),
+        reply_markup=back_kb(t, f"dealer:sub:{sub_id}:{page}"),
+    )
+
+
+@router.message(DealerIncome.value)
+async def manual_receipt_save(message: types.Message, t, db_user, state: FSMContext):
+    if db_user.role != "dealer" or db_user.is_blocked:
+        return
+    data = await state.get_data()
+    sub_id = data.get("manual_income_sub")
+    if not isinstance(sub_id, int):
+        await state.clear()
+        await message.answer(t("dealer_action_failed"))
+        return
+    normalized = (message.text or "").strip().replace("٬", "").replace(",", "").replace(" ", "")
+    if not normalized.isdecimal():
+        await message.answer(t("dcat_received_invalid"))
+        return
+    received = int(normalized)
+    if not 0 <= received <= 1_000_000_000_000:
+        await message.answer(t("dcat_received_invalid"))
+        return
+    ok = await db_repo.record_manual_dealer_receipt(
+        db_user.id, sub_id, received, sale_id=data.get("manual_income_sale"),
+    )
+    await state.clear()
+    await message.answer(t("dcat_received_done") if ok else t("dcat_received_already"))
 
 
 @router.callback_query(F.data == "dealer:balance")
@@ -191,6 +250,10 @@ async def dealer_buy_subscription(callback: types.CallbackQuery, t, lang, db_use
         return
     await state.clear()
     await callback.answer()
+    if settings.dynamic_catalog_enabled:
+        from app.handlers.dealer_catalog import show_offers
+        await show_offers(callback, t, lang, db_user)
+        return
     await send_with_logo(
         callback,
         t("dealer_buy_intro"),
@@ -490,6 +553,10 @@ async def dealer_subscription_renew(callback: types.CallbackQuery, t, lang, db_u
         await callback.answer(strip_custom_emoji_tags(t("subscription_not_found")), show_alert=True)
         return
     await callback.answer()
+    if settings.dynamic_catalog_enabled:
+        from app.handlers.dealer_catalog import show_offers
+        await show_offers(callback, t, lang, db_user, sub_id=sub_id, page=page)
+        return
     await send_with_logo(
         callback,
         t("dealer_renew_intro", id=sub_id),

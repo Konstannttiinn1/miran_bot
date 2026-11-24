@@ -129,7 +129,12 @@ async def record_managed_sale(session, sub, dealer_id, amount, event_key, *, at=
         event_key=event_key, user_telegram_id=None,
         dealer_telegram_id=dealer.telegram_id if dealer else None,
         managed_subscription_id=sub.id, managed_created_at=sub.created_at, customer_name=sub.client_name,
-        kind="subscription", plan=sub.plan, amount=Decimal(str(amount)), currency="USD",
+        kind="subscription", plan=sub.plan,
+        catalog_tariff_id=getattr(sub, "catalog_tariff_id", None),
+        catalog_revision=(getattr(sub, "catalog_snapshot", None) or {}).get("revision"),
+        catalog_title_fa=(getattr(sub, "catalog_snapshot", None) or {}).get("title_fa"),
+        retail_toman=(getattr(sub, "catalog_snapshot", None) or {}).get("base_retail_toman"),
+        amount=Decimal(str(amount)), currency="USD",
         confirmed_at=at or utcnow(), time_estimated=estimated,
     ).on_conflict_do_nothing(index_elements=["event_key"]))
 
