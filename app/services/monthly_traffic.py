@@ -249,7 +249,7 @@ async def reconcile_one(provider, email: str) -> None:
         updated = await provider._request(
             "PATCH", "/api/users", json={
                 "id": provider._user_id(user), "trafficLimitBytes": int(quota.base_bytes or BASE_BYTES),
-                **_status_patch(user, BASE_BYTES),
+                **_status_patch(user, int(quota.base_bytes or BASE_BYTES)),
             },
         )
         if not updated.get("shortUuid"):
