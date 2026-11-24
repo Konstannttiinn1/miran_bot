@@ -80,10 +80,14 @@ async def test_custom_50gb_quota_survives_rolling_reset_and_credit_expires(datab
         assert quota.base_bytes == 50 * GB and quota.initialized
     assert await monthly_traffic.add_monthly_traffic(provider, "manual-catalog-test", 50) == 100
     assert remote["trafficLimitBytes"] == 100 * GB
-    remote["usedTrafficBytes"] = 0
+    # A LIMITED user with 60 GB already used must NOT be re-enabled when
+    # the monthly quota resets from a 100 GB bonus to a custom 50 GB base.
+    remote["usedTrafficBytes"] = 60 * GB
+    remote["status"] = "LIMITED"
     remote["lastTrafficResetAt"] = (utcnow() + timedelta(days=30)).isoformat() + "Z"
     await monthly_traffic.reconcile_one(provider, "manual-catalog-test")
     assert remote["trafficLimitBytes"] == 50 * GB
+    assert remote["status"] == "LIMITED"
     async with database() as session:
         quota = await session.get(MonthlyTrafficQuota, "manual-catalog-test")
         assert quota.base_bytes == 50 * GB and quota.extra_bytes == 0
